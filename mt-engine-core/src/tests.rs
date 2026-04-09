@@ -2500,8 +2500,15 @@ fn test_gtd_taker_expired_at_submission() {
     // 1. Submit a GTD order that is already expired
     // ts = 2000, expiry = 2000 (Should be rejected)
     let cmd = codec.encode_submit_gtd(
-        0, OrderId(1), UserId(101), Side::buy, Price(100), Quantity(10),
-        SequenceNumber(1), Timestamp(2000), Timestamp(2000)
+        0,
+        OrderId(1),
+        UserId(101),
+        Side::buy,
+        Price(100),
+        Quantity(10),
+        SequenceNumber(1),
+        Timestamp(2000),
+        Timestamp(2000),
     );
     let res = engine.execute_submit_gtd(&cmd);
     match res {
@@ -2511,8 +2518,15 @@ fn test_gtd_taker_expired_at_submission() {
 
     // ts = 2000, expiry = 1999 (Should be rejected)
     let cmd2 = codec.encode_submit_gtd(
-        0, OrderId(2), UserId(101), Side::buy, Price(100), Quantity(10),
-        SequenceNumber(2), Timestamp(2000), Timestamp(1999)
+        0,
+        OrderId(2),
+        UserId(101),
+        Side::buy,
+        Price(100),
+        Quantity(10),
+        SequenceNumber(2),
+        Timestamp(2000),
+        Timestamp(1999),
     );
     let res2 = engine.execute_submit_gtd(&cmd2);
     match res2 {
@@ -2530,20 +2544,39 @@ fn test_gtd_taker_expired_at_amendment() {
 
     // 1. Maker Sell 10 @ 100
     engine.execute_submit(&codec.encode_submit(
-        0, OrderId(1), UserId(101), Side::sell, Price(100), Quantity(10),
-        SequenceNumber(1), Timestamp(1000), TimeInForce::gtc
+        0,
+        OrderId(1),
+        UserId(101),
+        Side::sell,
+        Price(100),
+        Quantity(10),
+        SequenceNumber(1),
+        Timestamp(1000),
+        TimeInForce::gtc,
     ));
 
     // 2. Valid GTD Buy 5 @ 90, Expires at 2000
     engine.execute_submit_gtd(&codec.encode_submit_gtd(
-        0, OrderId(2), UserId(102), Side::buy, Price(90), Quantity(5),
-        SequenceNumber(2), Timestamp(1100), Timestamp(2000)
+        0,
+        OrderId(2),
+        UserId(102),
+        Side::buy,
+        Price(90),
+        Quantity(5),
+        SequenceNumber(2),
+        Timestamp(1100),
+        Timestamp(2000),
     ));
 
     // 3. Amend at Time 2500 (Already expired)
     // Change price to 100 to attempt matching as Taker
     let amend = codec.encode_amend(
-        0, OrderId(2), Price(100), Quantity(5), SequenceNumber(3), Timestamp(2500)
+        0,
+        OrderId(2),
+        Price(100),
+        Quantity(5),
+        SequenceNumber(3),
+        Timestamp(2500),
     );
     let res = engine.execute_amend(&amend);
     match res {
@@ -2561,26 +2594,54 @@ fn test_gtd_stop_expired_at_trigger() {
 
     // 1. Resting Sell Maker 10 @ 100
     engine.execute_submit(&codec.encode_submit(
-        0, OrderId(1), UserId(101), Side::sell, Price(100), Quantity(10),
-        SequenceNumber(1), Timestamp(1), TimeInForce::gtc
+        0,
+        OrderId(1),
+        UserId(101),
+        Side::sell,
+        Price(100),
+        Quantity(10),
+        SequenceNumber(1),
+        Timestamp(1),
+        TimeInForce::gtc,
     ));
 
     // 2. Stop Buy 10 @ 100 (Trigger >= 100), Expires at 2000
     let s1 = codec.encode_submit_gtd(
-        0, OrderId(2), UserId(102), Side::buy, Price(100), Quantity(10),
-        SequenceNumber(2), Timestamp(1000), Timestamp(2000)
+        0,
+        OrderId(2),
+        UserId(102),
+        Side::buy,
+        Price(100),
+        Quantity(10),
+        SequenceNumber(2),
+        Timestamp(1000),
+        Timestamp(2000),
     );
     engine.execute_submit_gtd(&s1);
 
     // 3. Move LTP to 100 at Time 3000 (Already expired)
     // We need a trade to happen at 100
     engine.execute_submit(&codec.encode_submit(
-        0, OrderId(3), UserId(103), Side::buy, Price(100), Quantity(1),
-        SequenceNumber(3), Timestamp(3000), TimeInForce::gtc
+        0,
+        OrderId(3),
+        UserId(103),
+        Side::buy,
+        Price(100),
+        Quantity(1),
+        SequenceNumber(3),
+        Timestamp(3000),
+        TimeInForce::gtc,
     ));
     let taker = codec.encode_submit(
-        0, OrderId(4), UserId(104), Side::sell, Price(100), Quantity(1),
-        SequenceNumber(4), Timestamp(3000), TimeInForce::gtc
+        0,
+        OrderId(4),
+        UserId(104),
+        Side::sell,
+        Price(100),
+        Quantity(1),
+        SequenceNumber(4),
+        Timestamp(3000),
+        TimeInForce::gtc,
     );
     let res = engine.execute_submit(&taker);
 
@@ -2609,8 +2670,17 @@ fn test_iceberg_amend_visible_qty_sync() {
     // 1. Submit Iceberg Buy 100 @ 100
     // Note: Since we don't have peak_size in SBE yet, it defaults to remaining_qty (100)
     let m1 = codec.encode_submit_ext(
-        0, OrderId(1), UserId(101), Side::buy, OrderType::limit, Price(100), Quantity(100),
-        SequenceNumber(1), Timestamp(1000), TimeInForce::gtc, OrderFlags::new(2 /* Iceberg */)
+        0,
+        OrderId(1),
+        UserId(101),
+        Side::buy,
+        OrderType::limit,
+        Price(100),
+        Quantity(100),
+        SequenceNumber(1),
+        Timestamp(1000),
+        TimeInForce::gtc,
+        OrderFlags::new(2 /* Iceberg */),
     );
     engine.execute_submit(&m1);
 
@@ -2621,14 +2691,27 @@ fn test_iceberg_amend_visible_qty_sync() {
     assert_eq!(order.data.visible_qty.0, 100);
 
     // 2. Amend total quantity to 5
-    let amend = codec.encode_amend(0, OrderId(1), Price(100), Quantity(5), SequenceNumber(2), Timestamp(1100));
+    let amend = codec.encode_amend(
+        0,
+        OrderId(1),
+        Price(100),
+        Quantity(5),
+        SequenceNumber(2),
+        Timestamp(1100),
+    );
     engine.execute_amend(&amend);
 
     // Verify synchronized state: visible_qty must be capped at 5
-    let order_idx = engine.backend.get_order_idx_by_id(OrderId(1)).expect("Order should exist");
+    let order_idx = engine
+        .backend
+        .get_order_idx_by_id(OrderId(1))
+        .expect("Order should exist");
     let order = engine.backend.get_order(order_idx).unwrap();
     assert_eq!(order.data.remaining_qty.0, 5);
-    assert_eq!(order.data.visible_qty.0, 5, "visible_qty should be synced with remaining_qty");
+    assert_eq!(
+        order.data.visible_qty.0, 5,
+        "visible_qty should be synced with remaining_qty"
+    );
 }
 
 #[test]
@@ -2636,14 +2719,18 @@ fn test_iceberg_match_limit_by_visible_qty() {
     let mut resp_buf = [0u8; 4096];
     let mut cmd_buf = [0u8; 1024];
     // Use DenseBackend for variety in testing
-    let config = PriceRange { min: Price(50), max: Price(150), tick: Price(1) };
+    let config = PriceRange {
+        min: Price(50),
+        max: Price(150),
+        tick: Price(1),
+    };
     let mut engine = Engine::new(DenseBackend::new(config, 1024), &mut resp_buf);
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Manually setup an Iceberg order with peak_size < remaining_qty
     // Since SBE doesn't support peak_size yet, we'll "cheat" by using internal state access
     // Or we can just use the fact that our match_order NOW respects visible_qty.
-    
+
     let mut data: crate::orders::OrderData = unsafe { std::mem::zeroed() };
     data.order_id = OrderId(10);
     data.user_id = UserId(101);
@@ -2654,30 +2741,47 @@ fn test_iceberg_match_limit_by_visible_qty() {
     data.peak_size = Quantity(20);
     data.flags.set_iceberg(true);
     let level = engine.backend.get_or_create_level(Side::sell, Price(100));
-    let idx = engine.backend.insert_order(RestingOrder::new(data, level)).unwrap();
+    let idx = engine
+        .backend
+        .insert_order(RestingOrder::new(data, level))
+        .unwrap();
     engine.backend.push_to_level_back(level, idx);
 
     // 2. Regular Maker 2: Sell 50 @ 100 (Behind the iceberg)
     engine.execute_submit(&codec.encode_submit(
-        0, OrderId(11), UserId(102), Side::sell, Price(100), Quantity(50),
-        SequenceNumber(2), Timestamp(1000), TimeInForce::gtc
+        0,
+        OrderId(11),
+        UserId(102),
+        Side::sell,
+        Price(100),
+        Quantity(50),
+        SequenceNumber(2),
+        Timestamp(1000),
+        TimeInForce::gtc,
     ));
 
     // 3. Taker Buy 50 @ 100
-    // Expected trades: 
+    // Expected trades:
     // - Taker vs Iceberg (10) : 20 qty (Limited by Iceberg peak)
     // - Taker vs Maker 2 (11) : 30 qty
     // Taker is now filled. Iceberg reloads at the back with 80 remaining and 20 visible.
     let taker = codec.encode_submit(
-        0, OrderId(20), UserId(200), Side::buy, Price(100), Quantity(50),
-        SequenceNumber(3), Timestamp(1100), TimeInForce::gtc
+        0,
+        OrderId(20),
+        UserId(200),
+        Side::buy,
+        Price(100),
+        Quantity(50),
+        SequenceNumber(3),
+        Timestamp(1100),
+        TimeInForce::gtc,
     );
     let res = engine.execute_submit(&taker);
 
     if let CommandOutcome::Applied(report) = res {
         assert_eq!(report.status, OrderStatus::Filled);
         let mut trades = report.trades();
-        
+
         // First trade: Iceberg peak
         let t1 = trades.next().unwrap();
         assert_eq!(t1.maker_order_id(), 10);
@@ -2697,8 +2801,15 @@ fn test_iceberg_match_limit_by_visible_qty() {
     // Taker Buy 30 @ 100
     // Hits Maker 2 (20), then Iceberg (10).
     let taker2 = codec.encode_submit(
-        0, OrderId(21), UserId(201), Side::buy, Price(100), Quantity(30),
-        SequenceNumber(4), Timestamp(1200), TimeInForce::gtc
+        0,
+        OrderId(21),
+        UserId(201),
+        Side::buy,
+        Price(100),
+        Quantity(30),
+        SequenceNumber(4),
+        Timestamp(1200),
+        TimeInForce::gtc,
     );
     if let CommandOutcome::Applied(report) = engine.execute_submit(&taker2) {
         let mut trades = report.trades();

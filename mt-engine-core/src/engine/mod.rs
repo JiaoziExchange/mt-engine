@@ -411,7 +411,7 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
             if maker_order.data.is_iceberg() {
                 trade_qty = std::cmp::min(trade_qty, maker_order.data.visible_qty.0);
             }
-            
+
             if trade_qty == 0 {
                 // 如果是冰山单峰值耗尽，触发重新排队并【继续】匹配
                 if maker_order.data.is_iceberg() && maker_order.data.visible_qty.0 == 0 {
@@ -705,7 +705,10 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
 
                     if triggered_order.is_expired(ts) {
                         #[cfg(feature = "dev")]
-                        println!("[Dev] Triggered order {} is already expired at {}, skipping.", triggered_order.order_id.0, ts.0);
+                        println!(
+                            "[Dev] Triggered order {} is already expired at {}, skipping.",
+                            triggered_order.order_id.0, ts.0
+                        );
                         continue;
                     }
 

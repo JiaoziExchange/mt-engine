@@ -221,7 +221,7 @@ impl OrderBookBackend for SparseBackend {
             order.data.remaining_qty = new_qty;
             // 同步修改可见数量，防止出现“幽灵峰值” (visible_qty > remaining_qty)
             order.data.visible_qty.0 = std::cmp::min(order.data.visible_qty.0, new_qty.0);
-            
+
             if let Some(level) = self.levels.get_mut(order.level_idx) {
                 level.total_qty = (level.total_qty as i64 - diff) as u64;
             }
