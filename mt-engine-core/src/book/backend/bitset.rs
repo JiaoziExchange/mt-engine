@@ -1,3 +1,6 @@
+use serde::{Serialize, Deserialize};
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct L3Bitset {
     l1: Vec<u64>,
     l2: Vec<u64>,
@@ -78,6 +81,13 @@ impl L3Bitset {
             }
         }
         None
+    }
+
+    #[inline(always)]
+    pub fn clear(&mut self) {
+        self.l1.fill(0);
+        self.l2.fill(0);
+        self.l3.fill(0);
     }
 }
 

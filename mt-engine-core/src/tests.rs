@@ -1999,3 +1999,46 @@ fn test_dense_out_of_bounds_price() {
         _ => panic!("Expected InvalidPrice"),
     }
 }
+
+#[test]
+#[cfg(feature = "snapshot")]
+fn test_engine_snapshot_recovery() {
+    use crate::book::backend::dense::DenseBackend;
+    use crate::book::backend::dense::PriceRange;
+
+    let mut resp_buf = [0u8; 4096];
+    let mut cmd_buf = [0u8; 1024];
+    
+    // 1. 在 SparseBackend 上构建初始状态
+    let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+    let mut codec = CommandCodec::new(&mut cmd_buf);
+
+    // 提交一些订单
+    engine.execute_submit(&codec.encode_submit(
+        0, OrderId(1), UserId(101), Side::buy, Price(100), Quantity(10), SequenceNumber(1), Timestamp(1000), TimeInForce::gtc
+    ));
+    engine.execute_submit(&codec.encode_submit(
+        100, OrderId(2), UserId(102), Side::sell, Price(110), Quantity(20), SequenceNumber(2), Timestamp(1100), TimeInForce::gtc
+    ));
+
+    // 2. 导出快照模型
+    let snapshot = engine.to_snapshot();
+    assert_eq!(snapshot.last_sequence_number.0, 2);
+
+    // 3. 在一个新的 SparseBackend 引擎上恢复
+    let mut resp_buf2 = [0u8; 4096];
+    let mut engine_sparse = Engine::new(SparseBackend::new(), &mut resp_buf2);
+    engine_sparse.from_snapshot(snapshot.clone());
+
+    assert_eq!(engine_sparse.backend.best_bid_price().unwrap().0, 100);
+    assert_eq!(engine_sparse.backend.best_ask_price().unwrap().0, 110);
+
+    // 4. 在一个 DenseBackend 引擎上恢复 (异构恢复验证)
+    let dense_config = PriceRange { min: Price(1), max: Price(1000), tick: Price(1) };
+    let mut resp_buf3 = [0u8; 4096];
+    let mut engine_dense = Engine::new(DenseBackend::new(dense_config, 1024), &mut resp_buf3);
+    engine_dense.from_snapshot(snapshot);
+
+    assert_eq!(engine_dense.backend.best_bid_price().unwrap().0, 100);
+    assert_eq!(engine_dense.backend.best_ask_price().unwrap().0, 110);
+}

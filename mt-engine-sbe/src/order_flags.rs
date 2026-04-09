@@ -1,4 +1,6 @@
-#[derive(Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+use serde::{Serialize, Deserialize};
+
+#[derive(Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct OrderFlags(pub u16);
 impl OrderFlags {
     #[inline]

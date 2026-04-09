@@ -238,4 +238,59 @@ impl OrderBookBackend for SparseBackend {
     fn validate_price(&self, _price: Price) -> bool {
         true
     }
+
+    fn export_levels(&self) -> Vec<crate::snapshot::PriceLevelModel> {
+        let mut model_levels = Vec::with_capacity(self.bids.len() + self.asks.len());
+
+        // 处理买单
+        for (&price, &level_idx) in &self.bids {
+            if let Some(level) = self.levels.get(level_idx) {
+                let orders = level
+                    .queue
+                    .iter()
+                    .filter_map(|&idx| self.orders.get(idx).map(|o| o.data))
+                    .collect();
+                model_levels.push(crate::snapshot::PriceLevelModel {
+                    price,
+                    side: Side::buy,
+                    orders,
+                });
+            }
+        }
+
+        // 处理卖单
+        for (&price, &level_idx) in &self.asks {
+            if let Some(level) = self.levels.get(level_idx) {
+                let orders = level
+                    .queue
+                    .iter()
+                    .filter_map(|&idx| self.orders.get(idx).map(|o| o.data))
+                    .collect();
+                model_levels.push(crate::snapshot::PriceLevelModel {
+                    price,
+                    side: Side::sell,
+                    orders,
+                });
+            }
+        }
+
+        model_levels
+    }
+
+    fn import_levels(&mut self, levels: Vec<crate::snapshot::PriceLevelModel>) {
+        // 清空现有状态
+        self.orders.clear();
+        self.levels.clear();
+        self.bids.clear();
+        self.asks.clear();
+        self.order_map.clear();
+
+        for model_level in levels {
+            let level_idx = self.get_or_create_level(model_level.side, model_level.price);
+            for order_data in model_level.orders {
+                let order_idx = self.insert_order(RestingOrder::new(order_data, level_idx));
+                self.push_to_level_back(level_idx, order_idx);
+            }
+        }
+    }
 }

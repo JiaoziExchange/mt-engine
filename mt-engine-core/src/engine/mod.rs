@@ -16,6 +16,11 @@ use mt_engine::WriteBuf;
 use slab::Slab;
 use std::collections::BTreeMap;
 
+#[cfg(feature = "snapshot")]
+use crate::snapshot::{SnapshotConfig, SnapshotModel};
+#[cfg(feature = "snapshot")]
+use std::io::Write;
+
 /// 撮合引擎 - 单线程、极致性能状态机
 /// 方案 B：全链路零分配 & SBE 直接编码
 pub struct Engine<'a, B: OrderBookBackend = SparseBackend> {
@@ -44,6 +49,15 @@ pub struct Engine<'a, B: OrderBookBackend = SparseBackend> {
     tp_buy_triggers: BTreeMap<Price, Vec<usize>>,
     /// 止盈触发池 - 卖单 (LTP >= TriggerPrice)
     tp_sell_triggers: BTreeMap<Price, Vec<usize>>,
+
+    #[cfg(feature = "snapshot")]
+    pub snapshot_config: Option<SnapshotConfig>,
+    #[cfg(feature = "snapshot")]
+    uncommitted_commands: u64,
+    #[cfg(feature = "snapshot")]
+    last_snapshot_ts: u64,
+    #[cfg(feature = "snapshot")]
+    snapshotting_pid: libc::pid_t,
 }
 
 impl<'a, B: OrderBookBackend> Engine<'a, B> {
@@ -61,7 +75,17 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
             ltp: Price(0),
             condition_order_store: Slab::with_capacity(1024),
             trigger_index_buffer: Vec::with_capacity(64),
-        }
+            #[cfg(feature = "snapshot")]
+            snapshot_config: None,
+            #[cfg(feature = "snapshot")]
+            uncommitted_commands: 0,
+            #[cfg(feature = "snapshot")]
+            last_snapshot_ts: 0,
+            #[cfg(feature = "snapshot")]
+            snapshotting_pid: 0,
+        };
+
+        engine
     }
 
     /// 预检查 FOK 深度是否满足
@@ -168,6 +192,9 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
             }
         };
 
+        #[cfg(all(feature = "snapshot", not(feature = "dense-node")))]
+        self.check_snapshot_trigger();
+
         CommandOutcome::Applied(CommandReport {
             order_id: taker_order.order_id,
             status: final_status,
@@ -233,6 +260,9 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
                 OrderStatus::New
             }
         };
+
+        #[cfg(all(feature = "snapshot", not(feature = "dense-node")))]
+        self.check_snapshot_trigger();
 
         CommandOutcome::Applied(CommandReport {
             order_id: taker_order.order_id,
@@ -400,6 +430,9 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
             self.backend.remove_order(order_idx);
             self.backend.remove_empty_level(level_idx);
 
+            #[cfg(all(feature = "snapshot", not(feature = "dense-node")))]
+            self.check_snapshot_trigger();
+
             CommandOutcome::Applied(CommandReport {
                 order_id,
                 status: OrderStatus::Cancelled,
@@ -461,6 +494,9 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
                         OrderStatus::New
                     }
                 };
+
+                #[cfg(all(feature = "snapshot", not(feature = "dense-node")))]
+                self.check_snapshot_trigger();
 
                 CommandOutcome::Applied(CommandReport {
                     order_id,
@@ -625,5 +661,168 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
             .backend
             .insert_order(RestingOrder::new(order_data, level_idx));
         self.backend.push_to_level_back(level_idx, order_idx);
+    }
+
+    // ========== 快照 (Snapshot) 核心逻辑 ==========
+
+    #[cfg(feature = "snapshot")]
+    pub fn to_snapshot(&self) -> SnapshotModel {
+        SnapshotModel {
+            last_sequence_number: self.last_sequence_number,
+            last_timestamp: self.last_timestamp,
+            trade_id_seq: self.trade_id_seq,
+            ltp: self.ltp,
+            levels: self.backend.export_levels(),
+            condition_orders: self
+                .condition_order_store
+                .iter()
+                .map(|(_, o)| *o)
+                .collect(),
+        }
+    }
+
+    #[cfg(feature = "snapshot")]
+    pub fn from_snapshot(&mut self, model: SnapshotModel) {
+        self.last_sequence_number = model.last_sequence_number;
+        self.last_timestamp = model.last_timestamp;
+        self.trade_id_seq = model.trade_id_seq;
+        self.ltp = model.ltp;
+        self.backend.import_levels(model.levels);
+
+        self.condition_order_store.clear();
+        self.stop_buy_triggers.clear();
+        self.stop_sell_triggers.clear();
+        self.tp_buy_triggers.clear();
+        self.tp_sell_triggers.clear();
+
+        for order in model.condition_orders {
+            self.register_condition_order(order);
+        }
+    }
+
+    /// 触发快照 (Fork-based CoW)
+    /// 仅在开启 snapshot 特性且 backend 支持导出且非 dense-node 时有效
+    #[cfg(all(feature = "snapshot", not(feature = "dense-node")))]
+    pub fn trigger_snapshot(&mut self) -> Result<(), String> {
+        let ts = self.last_timestamp.0;
+        let seq = self.last_sequence_number.0;
+
+        let path = if let Some(config) = &self.snapshot_config {
+            config
+                .path_template
+                .replace("{seq}", &seq.to_string())
+                .replace("{ts}", &ts.to_string())
+        } else {
+            format!("./snapshot_{}.bin.zst", seq)
+        };
+
+        let compress = self
+            .snapshot_config
+            .as_ref()
+            .map(|c| c.compress)
+            .unwrap_or(true);
+
+        unsafe {
+            let pid = libc::fork();
+            if pid == 0 {
+                // 子进程逻辑：在子进程中完成数据搜集，彻底消灭对父进程热路径的干扰
+                
+                // 1. 设置 CPU 亲和性 (可选，仅 Linux 支持)
+                #[cfg(target_os = "linux")]
+                if let Ok(cpu_id_str) = std::env::var("SNAPSHOT_CHILD_CPU_ID") {
+                    if let Ok(cpu_id) = cpu_id_str.parse::<usize>() {
+                        let mut cpuset: libc::cpu_set_t = std::mem::zeroed();
+                        libc::CPU_SET(cpu_id, &mut cpuset);
+                        libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &cpuset);
+                    }
+                }
+
+                // 2. 搜集数据构建模型 (在子进程执行)
+                let model = SnapshotModel {
+                    last_sequence_number: self.last_sequence_number,
+                    last_timestamp: self.last_timestamp,
+                    trade_id_seq: self.trade_id_seq,
+                    ltp: self.ltp,
+                    levels: self.backend.export_levels(),
+                    condition_orders: {
+                        let mut v = Vec::with_capacity(self.condition_order_store.len());
+                        for (_, o) in self.condition_order_store.iter() {
+                            v.push(*o);
+                        }
+                        v
+                    },
+                };
+
+                // 3. 序列化
+                let serialized = bincode::serialize(&model).unwrap();
+
+                // 4. 确保目录存在并写入
+                let snapshot_path = std::path::Path::new(&path);
+                if let Some(parent) = snapshot_path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+
+                let result = std::fs::File::create(&path).and_then(|file| {
+                    if compress {
+                        let mut encoder = zstd::Encoder::new(file, 3)?;
+                        encoder.write_all(&serialized)?;
+                        encoder.finish()?;
+                    } else {
+                        let mut writer = std::io::BufWriter::new(file);
+                        writer.write_all(&serialized)?;
+                    }
+                    Ok(())
+                });
+
+                if let Err(e) = result {
+                    eprintln!("[Snapshot Child] Failed to save snapshot: {}", e);
+                    libc::_exit(1);
+                }
+
+                libc::_exit(0);
+            } else if pid < 0 {
+                return Err("Fork failed".to_string());
+            } else {
+                // 父进程：记录子进程 PID 供状态检查
+                self.snapshotting_pid = pid;
+            }
+        }
+
+        self.uncommitted_commands = 0;
+        self.last_snapshot_ts = ts;
+        Ok(())
+    }
+
+    #[cfg(all(feature = "snapshot", not(feature = "dense-node")))]
+    #[inline(always)]
+    fn check_snapshot_trigger(&mut self) {
+        if let Some(config) = &self.snapshot_config {
+            self.uncommitted_commands += 1;
+            let time_passed = self
+                .last_timestamp
+                .0
+                .saturating_sub(self.last_snapshot_ts);
+
+            if self.uncommitted_commands >= config.count_interval
+                || (config.time_interval_ms > 0 && time_passed >= config.time_interval_ms)
+            {
+                // 1. 只有在准备触发新快照时，才检查上一个子进程是否结束
+                if self.snapshotting_pid != 0 {
+                    let mut status = 0;
+                    unsafe {
+                        let ret = libc::waitpid(self.snapshotting_pid, &mut status, libc::WNOHANG);
+                        if ret == self.snapshotting_pid || ret < 0 {
+                            // 子进程结束或出错
+                            self.snapshotting_pid = 0;
+                        } else {
+                            // 仍在运行，跳过本次触发，等待下一轮
+                            return;
+                        }
+                    }
+                }
+
+                let _ = self.trigger_snapshot();
+            }
+        }
     }
 }

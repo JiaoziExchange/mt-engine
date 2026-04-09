@@ -368,6 +368,30 @@ impl OrderBookBackend for DenseBackend {
     fn validate_price(&self, price: Price) -> bool {
         price >= self.config.min && price <= self.config.max
     }
+
+    fn import_levels(&mut self, levels: Vec<crate::snapshot::PriceLevelModel>) {
+        // 清空现有状态 (保持预分配的池子大小)
+        self.bids_bitset.clear();
+        self.asks_bitset.clear();
+        self.level_array.fill(None);
+        self.order_map.clear();
+        self.free_list.clear();
+        for i in (1..self.order_pool.len() as u32).rev() {
+            self.free_list.push(i);
+        }
+
+        for model_level in levels {
+            // 注意：DenseBackend 需要验证价格范围
+            if !self.validate_price(model_level.price) {
+                continue;
+            }
+            let level_idx = self.get_or_create_level(model_level.side, model_level.price);
+            for order_data in model_level.orders {
+                let order_idx = self.insert_order(RestingOrder::new(order_data, level_idx));
+                self.push_to_level_back(level_idx, order_idx);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
