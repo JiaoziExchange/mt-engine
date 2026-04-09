@@ -640,6 +640,9 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
 
         loop {
             if depth >= MAX_TRIGGER_DEPTH {
+                // TODO: 级联触发截断遗留问题。如果触发深度超过 MAX_TRIGGER_DEPTH 而中断，
+                // 剩余应触发的条件单将留在池中直到下一次价格变动。
+                // 建议：加入超限报错拦截，或将遗留单放回独立的延后队列处理。
                 break;
             }
             depth += 1;
