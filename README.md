@@ -51,8 +51,8 @@ To achieve ultra-low latency and maintain system integrity, integration with MT-
 
 ### 1. Strictly Monotonic OrderIDs
 Order IDs MUST be **strictly increasing** and **unique** for each symbol/engine instance:
-- **Requirement**: `new_id > last_order_id`.
-- **Enforcement**: The engine performs an $O(1)$ hardware-friendly check at the ingestion point.
+- **Requirement**: `new_id > last_order_id`. In **Dense Mode**, the ID must also fall within `[1, capacity]` for deterministic physical indexing (managed by OMS via ID recycling).
+- **Validation**: Engine performs an $O(1)$ hardware-friendly numerical check at the entry point.
 - **Reaction**: Requests with duplicate or regressing IDs are immediately rejected with `DuplicateOrderId`.
 - **Reason**: This eliminates the need for expensive hash map lookups for uniqueness checks, maintaining sub-20ns latency.
 
