@@ -2489,3 +2489,112 @@ fn test_dense_id_out_of_bounds() {
         _ => panic!("Expected rejection for out-of-bounds Order ID"),
     }
 }
+
+#[test]
+fn test_gtd_taker_expired_at_submission() {
+    let mut resp_buf = [0u8; 4096];
+    let mut cmd_buf = [0u8; 1024];
+    let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+    let mut codec = CommandCodec::new(&mut cmd_buf);
+
+    // 1. Submit a GTD order that is already expired
+    // ts = 2000, expiry = 2000 (Should be rejected)
+    let cmd = codec.encode_submit_gtd(
+        0, OrderId(1), UserId(101), Side::buy, Price(100), Quantity(10),
+        SequenceNumber(1), Timestamp(2000), Timestamp(2000)
+    );
+    let res = engine.execute_submit_gtd(&cmd);
+    match res {
+        CommandOutcome::Rejected(CommandFailure::Expired) => {}
+        _ => panic!("Expected Expired rejection, got {:?}", res),
+    }
+
+    // ts = 2000, expiry = 1999 (Should be rejected)
+    let cmd2 = codec.encode_submit_gtd(
+        0, OrderId(2), UserId(101), Side::buy, Price(100), Quantity(10),
+        SequenceNumber(2), Timestamp(2000), Timestamp(1999)
+    );
+    let res2 = engine.execute_submit_gtd(&cmd2);
+    match res2 {
+        CommandOutcome::Rejected(CommandFailure::Expired) => {}
+        _ => panic!("Expected Expired rejection for cmd2, got {:?}", res2),
+    }
+}
+
+#[test]
+fn test_gtd_taker_expired_at_amendment() {
+    let mut resp_buf = [0u8; 4096];
+    let mut cmd_buf = [0u8; 1024];
+    let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+    let mut codec = CommandCodec::new(&mut cmd_buf);
+
+    // 1. Maker Sell 10 @ 100
+    engine.execute_submit(&codec.encode_submit(
+        0, OrderId(1), UserId(101), Side::sell, Price(100), Quantity(10),
+        SequenceNumber(1), Timestamp(1000), TimeInForce::gtc
+    ));
+
+    // 2. Valid GTD Buy 5 @ 90, Expires at 2000
+    engine.execute_submit_gtd(&codec.encode_submit_gtd(
+        0, OrderId(2), UserId(102), Side::buy, Price(90), Quantity(5),
+        SequenceNumber(2), Timestamp(1100), Timestamp(2000)
+    ));
+
+    // 3. Amend at Time 2500 (Already expired)
+    // Change price to 100 to attempt matching as Taker
+    let amend = codec.encode_amend(
+        0, OrderId(2), Price(100), Quantity(5), SequenceNumber(3), Timestamp(2500)
+    );
+    let res = engine.execute_amend(&amend);
+    match res {
+        CommandOutcome::Rejected(CommandFailure::Expired) => {}
+        _ => panic!("Expected Expired rejection at amendment, got {:?}", res),
+    }
+}
+
+#[test]
+fn test_gtd_stop_expired_at_trigger() {
+    let mut resp_buf = [0u8; 8192];
+    let mut cmd_buf = [0u8; 1024];
+    let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+    let mut codec = CommandCodec::new(&mut cmd_buf);
+
+    // 1. Resting Sell Maker 10 @ 100
+    engine.execute_submit(&codec.encode_submit(
+        0, OrderId(1), UserId(101), Side::sell, Price(100), Quantity(10),
+        SequenceNumber(1), Timestamp(1), TimeInForce::gtc
+    ));
+
+    // 2. Stop Buy 10 @ 100 (Trigger >= 100), Expires at 2000
+    let s1 = codec.encode_submit_gtd(
+        0, OrderId(2), UserId(102), Side::buy, Price(100), Quantity(10),
+        SequenceNumber(2), Timestamp(1000), Timestamp(2000)
+    );
+    engine.execute_submit_gtd(&s1);
+
+    // 3. Move LTP to 100 at Time 3000 (Already expired)
+    // We need a trade to happen at 100
+    engine.execute_submit(&codec.encode_submit(
+        0, OrderId(3), UserId(103), Side::buy, Price(100), Quantity(1),
+        SequenceNumber(3), Timestamp(3000), TimeInForce::gtc
+    ));
+    let taker = codec.encode_submit(
+        0, OrderId(4), UserId(104), Side::sell, Price(100), Quantity(1),
+        SequenceNumber(4), Timestamp(3000), TimeInForce::gtc
+    );
+    let res = engine.execute_submit(&taker);
+
+    // Check if S1 matched. It shouldn't match because it's expired.
+    if let CommandOutcome::Applied(report) = res {
+        // Only Taker (4) vs Maker (3) should match
+        assert_eq!(report.trades().count(), 1);
+        let trade = report.trades().next().unwrap();
+        assert_eq!(trade.taker_order_id(), 4);
+        assert_eq!(trade.maker_order_id(), 3);
+    } else {
+        panic!("Expected Applied outcome");
+    }
+
+    // Verify S1 is NOT in the book
+    assert_eq!(engine.backend.best_bid_price(), None);
+}

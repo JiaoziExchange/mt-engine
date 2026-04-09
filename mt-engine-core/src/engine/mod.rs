@@ -294,6 +294,10 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
             return CommandOutcome::Rejected(CommandFailure::InvalidPrice);
         }
 
+        if taker_order.is_expired(ts) {
+            return CommandOutcome::Rejected(CommandFailure::Expired);
+        }
+
         let mut offset = 0usize;
 
         // 【条件单分支 (GTD + SL/TP)】
@@ -556,6 +560,10 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
                 order.data.price = new_price;
                 order.data.remaining_qty = new_qty;
 
+                if order.data.is_expired(ts) {
+                    return CommandOutcome::Rejected(CommandFailure::Expired);
+                }
+
                 let mut offset = 0usize;
                 if let Err(fail) = self.match_order(&mut order.data, ts, seq, &mut offset) {
                     // [回滚逻辑]：如果匹配过程出错（如 PostOnly 冲突），将原数据重新挂起
@@ -666,6 +674,12 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
                 if let Some(mut triggered_order) = self.condition_order_store.try_remove(s_idx) {
                     // 激活后从映射表中移除
                     self.pending_stop_map.remove(&triggered_order.order_id);
+
+                    if triggered_order.is_expired(ts) {
+                        #[cfg(feature = "dev")]
+                        println!("[Dev] Triggered order {} is already expired at {}, skipping.", triggered_order.order_id.0, ts.0);
+                        continue;
+                    }
 
                     // 激活后直接进行 match_order
                     let _ = self.match_order(&mut triggered_order, ts, seq, offset);
