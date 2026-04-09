@@ -364,11 +364,14 @@ pub struct OrderLink {
 /// Dense 后端核心结构
 pub struct DenseBackend {
     config: PriceRange,
+    /// 价格 ID 到档位数据的物理寻址
     level_array: Vec<Option<LevelData>>,
     bitset: L3Bitset,
 
+    /// OrderID 到物理订单索引的直接映射 (15ns 级响应)
+    id_to_index: Vec<u32>,
+
     /// 订单池：固定大小的 OrderData 数组
-    /// 使用 ptr::copy 进行 O(1) 插入
     order_pool: Vec<OrderData>,
     /// 订单链表指针：侵入式链表
     order_links: Vec<OrderLink>,
