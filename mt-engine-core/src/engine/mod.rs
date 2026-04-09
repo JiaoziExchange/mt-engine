@@ -402,10 +402,34 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
                 continue;
             }
 
-            let trade_qty = std::cmp::min(
+            let mut trade_qty = std::cmp::min(
                 taker_order.remaining_qty.0,
                 maker_order.data.remaining_qty.0,
             );
+
+            // 【冰山单逻辑】：单次撮合不得超过当前可见峰值
+            if maker_order.data.is_iceberg() {
+                trade_qty = std::cmp::min(trade_qty, maker_order.data.visible_qty.0);
+            }
+            
+            if trade_qty == 0 {
+                // 如果是冰山单峰值耗尽，触发重新排队并【继续】匹配
+                if maker_order.data.is_iceberg() && maker_order.data.visible_qty.0 == 0 {
+                    let reload_qty = std::cmp::min(
+                        maker_order.data.remaining_qty.0,
+                        maker_order.data.peak_size.0,
+                    );
+                    maker_order.data.visible_qty = Quantity(reload_qty);
+                    let new_maker_idx = self.backend.insert_order(maker_order)?;
+                    self.backend.push_to_level_back(level_idx, new_maker_idx);
+                    continue; // 关键：继续循环匹配下一个 Maker
+                } else {
+                    // 非冰山单理论上不会出现 trade_qty == 0，做防御性插回并退出
+                    let new_maker_idx = self.backend.insert_order(maker_order)?;
+                    self.backend.push_to_level_front(level_idx, new_maker_idx);
+                    break;
+                }
+            }
 
             taker_order.remaining_qty.0 -= trade_qty;
             taker_order.filled_qty.0 += trade_qty;
@@ -453,7 +477,7 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
             self.ltp = opp_price;
 
             if !maker_order.data.is_fully_filled() {
-                // 如果是冰山单且 Peak 消耗完，需要重新排队
+                // 如果是冰山单且 Peak 消耗完，需要重新排队并【继续】匹配
                 if maker_order.data.visible_qty.0 == 0 && maker_order.data.is_iceberg() {
                     // 自动从 remaining_qty 中补足下一个 Peak
                     let reload_qty = std::cmp::min(
@@ -464,12 +488,13 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
 
                     let new_maker_idx = self.backend.insert_order(maker_order)?;
                     self.backend.push_to_level_back(level_idx, new_maker_idx);
+                    continue; // 关键：继续循环
                 } else {
-                    // 普通情况（或 Peak 还有剩余），插回队首保持优先级
+                    // 普通情况（或 Peak 还有剩余），说明是 Taker 耗尽，插回队首并退出
                     let new_maker_idx = self.backend.insert_order(maker_order)?;
                     self.backend.push_to_level_front(level_idx, new_maker_idx);
+                    break;
                 }
-                break;
             } else if self.backend.level_order_count(level_idx) == 0 {
                 self.backend.remove_empty_level(level_idx);
             }

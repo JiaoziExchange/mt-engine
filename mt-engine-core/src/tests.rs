@@ -2598,3 +2598,111 @@ fn test_gtd_stop_expired_at_trigger() {
     // Verify S1 is NOT in the book
     assert_eq!(engine.backend.best_bid_price(), None);
 }
+
+#[test]
+fn test_iceberg_amend_visible_qty_sync() {
+    let mut resp_buf = [0u8; 1024];
+    let mut cmd_buf = [0u8; 1024];
+    let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+    let mut codec = CommandCodec::new(&mut cmd_buf);
+
+    // 1. Submit Iceberg Buy 100 @ 100
+    // Note: Since we don't have peak_size in SBE yet, it defaults to remaining_qty (100)
+    let m1 = codec.encode_submit_ext(
+        0, OrderId(1), UserId(101), Side::buy, OrderType::limit, Price(100), Quantity(100),
+        SequenceNumber(1), Timestamp(1000), TimeInForce::gtc, OrderFlags::new(2 /* Iceberg */)
+    );
+    engine.execute_submit(&m1);
+
+    // Verify initial state
+    let order_idx = engine.backend.get_order_idx_by_id(OrderId(1)).unwrap();
+    let order = engine.backend.get_order(order_idx).unwrap();
+    assert_eq!(order.data.remaining_qty.0, 100);
+    assert_eq!(order.data.visible_qty.0, 100);
+
+    // 2. Amend total quantity to 5
+    let amend = codec.encode_amend(0, OrderId(1), Price(100), Quantity(5), SequenceNumber(2), Timestamp(1100));
+    engine.execute_amend(&amend);
+
+    // Verify synchronized state: visible_qty must be capped at 5
+    let order_idx = engine.backend.get_order_idx_by_id(OrderId(1)).expect("Order should exist");
+    let order = engine.backend.get_order(order_idx).unwrap();
+    assert_eq!(order.data.remaining_qty.0, 5);
+    assert_eq!(order.data.visible_qty.0, 5, "visible_qty should be synced with remaining_qty");
+}
+
+#[test]
+fn test_iceberg_match_limit_by_visible_qty() {
+    let mut resp_buf = [0u8; 4096];
+    let mut cmd_buf = [0u8; 1024];
+    // Use DenseBackend for variety in testing
+    let config = PriceRange { min: Price(50), max: Price(150), tick: Price(1) };
+    let mut engine = Engine::new(DenseBackend::new(config, 1024), &mut resp_buf);
+    let mut codec = CommandCodec::new(&mut cmd_buf);
+
+    // 1. Manually setup an Iceberg order with peak_size < remaining_qty
+    // Since SBE doesn't support peak_size yet, we'll "cheat" by using internal state access
+    // Or we can just use the fact that our match_order NOW respects visible_qty.
+    
+    let mut data: crate::orders::OrderData = unsafe { std::mem::zeroed() };
+    data.order_id = OrderId(10);
+    data.user_id = UserId(101);
+    data.side = Side::sell;
+    data.price = Price(100);
+    data.remaining_qty = Quantity(100);
+    data.visible_qty = Quantity(20); // Peak is 20
+    data.peak_size = Quantity(20);
+    data.flags.set_iceberg(true);
+    let level = engine.backend.get_or_create_level(Side::sell, Price(100));
+    let idx = engine.backend.insert_order(RestingOrder::new(data, level)).unwrap();
+    engine.backend.push_to_level_back(level, idx);
+
+    // 2. Regular Maker 2: Sell 50 @ 100 (Behind the iceberg)
+    engine.execute_submit(&codec.encode_submit(
+        0, OrderId(11), UserId(102), Side::sell, Price(100), Quantity(50),
+        SequenceNumber(2), Timestamp(1000), TimeInForce::gtc
+    ));
+
+    // 3. Taker Buy 50 @ 100
+    // Expected trades: 
+    // - Taker vs Iceberg (10) : 20 qty (Limited by Iceberg peak)
+    // - Taker vs Maker 2 (11) : 30 qty
+    // Taker is now filled. Iceberg reloads at the back with 80 remaining and 20 visible.
+    let taker = codec.encode_submit(
+        0, OrderId(20), UserId(200), Side::buy, Price(100), Quantity(50),
+        SequenceNumber(3), Timestamp(1100), TimeInForce::gtc
+    );
+    let res = engine.execute_submit(&taker);
+
+    if let CommandOutcome::Applied(report) = res {
+        assert_eq!(report.status, OrderStatus::Filled);
+        let mut trades = report.trades();
+        
+        // First trade: Iceberg peak
+        let t1 = trades.next().unwrap();
+        assert_eq!(t1.maker_order_id(), 10);
+        assert_eq!(t1.quantity(), 20);
+
+        // Second trade: Maker 2
+        let t2 = trades.next().unwrap();
+        assert_eq!(t2.maker_order_id(), 11);
+        assert_eq!(t2.quantity(), 30);
+    } else {
+        panic!("Expected Applied match");
+    }
+
+    // 4. Verify Iceberg reload: it should be behind Maker 2
+    // Maker 2 has 20 remaining.
+    // Iceberg has 80 remaining.
+    // Taker Buy 30 @ 100
+    // Hits Maker 2 (20), then Iceberg (10).
+    let taker2 = codec.encode_submit(
+        0, OrderId(21), UserId(201), Side::buy, Price(100), Quantity(30),
+        SequenceNumber(4), Timestamp(1200), TimeInForce::gtc
+    );
+    if let CommandOutcome::Applied(report) = engine.execute_submit(&taker2) {
+        let mut trades = report.trades();
+        assert_eq!(trades.next().unwrap().maker_order_id(), 11); // Maker 2 is ahead
+        assert_eq!(trades.next().unwrap().maker_order_id(), 10); // Iceberg is behind
+    }
+}

@@ -335,6 +335,8 @@ impl OrderBookBackend for DenseBackend {
         let order = &mut self.order_pool[order_idx as usize];
         let diff = (order.data.remaining_qty.0 as i64) - (new_qty.0 as i64);
         order.data.remaining_qty = new_qty;
+        // 同步修改可见数量，防止出现“幽灵峰值” (visible_qty > remaining_qty)
+        order.data.visible_qty.0 = std::cmp::min(order.data.visible_qty.0, new_qty.0);
 
         let level_idx = order.level_idx;
         if let Some(level) = &mut self.level_array[level_idx as usize] {
