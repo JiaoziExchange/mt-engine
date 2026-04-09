@@ -910,10 +910,7 @@ fn bench_mixed_workload_group(c: &mut Criterion) {
 
     // 2. Dense Backend
     group.bench_function("Dense_Mixed", |b| {
-        let mut engine = Engine::new(
-            DenseBackend::new(BENCH_CONFIG, BENCH_CAPACITY),
-            resp_buf,
-        );
+        let mut engine = Engine::new(DenseBackend::new(BENCH_CONFIG, BENCH_CAPACITY), resp_buf);
         let mut codec = CommandCodec::new(&mut cmd_buf);
         let mut seq = 0u64;
         let mut seed = 42u64;
