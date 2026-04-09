@@ -2454,3 +2454,38 @@ fn test_e2e_snapshot_portability() {
 
     let _ = std::fs::remove_file(snapshot_file);
 }
+
+#[test]
+fn test_dense_id_out_of_bounds() {
+    let mut resp_buf = [0u8; 1024];
+    let mut cmd_buf = [0u8; 1024];
+    let config = PriceRange {
+        min: Price(100),
+        max: Price(200),
+        tick: Price(1),
+    };
+    // 限制 Max Order ID 为 1000
+    let mut engine = Engine::new(DenseBackend::new(config, 1024), &mut resp_buf);
+    let mut codec = CommandCodec::new(&mut cmd_buf);
+
+    // 1. 提交 ID 为 1025 的订单 (越界)
+    let cmd = codec.encode_submit(
+        0,
+        OrderId(1025),
+        UserId(1),
+        Side::buy,
+        Price(150),
+        Quantity(10),
+        SequenceNumber(1),
+        Timestamp(1000),
+        TimeInForce::gtc,
+    );
+
+    let outcome = engine.execute_submit(&cmd);
+    match outcome {
+        CommandOutcome::Rejected(fail) => {
+            assert_eq!(fail, CommandFailure::InvalidOrderId);
+        }
+        _ => panic!("Expected rejection for out-of-bounds Order ID"),
+    }
+}

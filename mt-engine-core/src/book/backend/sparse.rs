@@ -45,11 +45,14 @@ impl OrderBookBackend for SparseBackend {
     type LevelIdx = usize;
 
     #[inline(always)]
-    fn insert_order(&mut self, order: RestingOrder<Self::LevelIdx>) -> Self::OrderIdx {
+    fn insert_order(
+        &mut self,
+        order: RestingOrder<Self::LevelIdx>,
+    ) -> Result<Self::OrderIdx, crate::outcome::CommandFailure> {
         let order_id = order.data.order_id;
         let idx = self.orders.insert(order);
         self.order_map.insert(order_id, idx);
-        idx
+        Ok(idx)
     }
 
     #[inline(always)]
@@ -290,7 +293,9 @@ impl OrderBookBackend for SparseBackend {
         for model_level in levels {
             let level_idx = self.get_or_create_level(model_level.side, model_level.price);
             for order_data in model_level.orders {
-                let order_idx = self.insert_order(RestingOrder::new(order_data, level_idx));
+                let order_idx = self
+                    .insert_order(RestingOrder::new(order_data, level_idx))
+                    .unwrap();
                 self.push_to_level_back(level_idx, order_idx);
             }
         }

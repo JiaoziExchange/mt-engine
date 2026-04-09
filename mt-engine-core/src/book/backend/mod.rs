@@ -13,8 +13,11 @@ pub trait OrderBookBackend {
 
     // ========== 订单 (Order) 操作 ==========
 
-    /// 插入订单并返回索引
-    fn insert_order(&mut self, order: RestingOrder<Self::LevelIdx>) -> Self::OrderIdx;
+    /// 插入订单并返回索引，如果资源不足或 ID 冲突则返回错误
+    fn insert_order(
+        &mut self,
+        order: RestingOrder<Self::LevelIdx>,
+    ) -> Result<Self::OrderIdx, crate::outcome::CommandFailure>;
 
     /// 移除并返回订单
     fn remove_order(&mut self, order_idx: Self::OrderIdx) -> Option<RestingOrder<Self::LevelIdx>>;

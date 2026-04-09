@@ -69,6 +69,8 @@ pub enum CommandFailure {
     Expired,
     InvalidPrice,
     DuplicateOrderId,
+    CapacityExceeded,
+    InvalidOrderId,
 }
 
 /// 命令执行结果类型 (零拷贝版本)

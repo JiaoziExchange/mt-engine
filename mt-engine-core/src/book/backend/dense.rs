@@ -3,7 +3,6 @@ use super::OrderBookBackend;
 use crate::orders::RestingOrder;
 use crate::types::{OrderId, Price, Quantity};
 use mt_engine::side::Side;
-use rustc_hash::FxHashMap;
 
 #[derive(Clone, Copy, Debug)]
 pub struct PriceRange {
@@ -38,22 +37,21 @@ pub struct DenseBackend {
     pub order_pool: Vec<RestingOrder<u32>>,
     pub order_links: Vec<OrderLink>,
     pub free_list: Vec<u32>,
-    pub order_map: FxHashMap<OrderId, u32>,
+    pub id_to_index: Vec<u32>,
 }
 
 impl DenseBackend {
     pub fn new(config: PriceRange, capacity: usize) -> Self {
-        assert!(config.tick.0 > 0, "Tick size must be greater than 0"); // 边界溢出保护：防止除零异常
+        assert!(config.tick.0 > 0, "Tick size must be greater than 0");
         let depth = ((config.max.0 - config.min.0) / config.tick.0) as usize + 1;
 
         let mut free_list = Vec::with_capacity(capacity);
         for i in (1..=capacity as u32).rev() {
-            // 0 被保留为无效指针 (null pointer)
             free_list.push(i);
         }
 
-        // 初始化池子为默认值，长度为 capacity + 1（以 1 为基数的索引）
-        // 索引 0 作为虚拟订单占位。使用 MaybeUninit 更稳健以应对未来的字段扩展
+        let id_to_index = vec![0; capacity + 1];
+
         let dummy_order = RestingOrder {
             data: unsafe { std::mem::MaybeUninit::zeroed().assume_init() },
             level_idx: 0,
@@ -68,7 +66,7 @@ impl DenseBackend {
             order_pool: vec![dummy_order; capacity + 1],
             order_links: vec![OrderLink::default(); capacity + 1],
             free_list,
-            order_map: FxHashMap::default(),
+            id_to_index,
         }
     }
 
@@ -141,12 +139,28 @@ impl OrderBookBackend for DenseBackend {
     }
 
     #[inline(always)]
-    fn insert_order(&mut self, order: RestingOrder<Self::LevelIdx>) -> Self::OrderIdx {
-        debug_assert!(
-            !self.order_map.contains_key(&order.data.order_id),
-            "Duplicate order ID in dense backend"
-        );
-        let idx = self.free_list.pop().expect("Order pool exhausted");
+    fn insert_order(
+        &mut self,
+        order: RestingOrder<Self::LevelIdx>,
+    ) -> Result<Self::OrderIdx, crate::outcome::CommandFailure> {
+        let order_id = order.data.order_id.0 as usize;
+
+        // 1. 安全边界检查：防止恶意大 ID 导致的 OOM 或越界
+        if order_id >= self.id_to_index.len() {
+            return Err(crate::outcome::CommandFailure::InvalidOrderId);
+        }
+
+        // 2. 幂等性/重复检查：基于物理索引的 O(1) 校验
+        if self.id_to_index[order_id] != 0 {
+            return Err(crate::outcome::CommandFailure::DuplicateOrderId);
+        }
+
+        // 3. 订单池水位检查：优雅处理负载饱和
+        let idx = match self.free_list.pop() {
+            Some(idx) => idx,
+            None => return Err(crate::outcome::CommandFailure::CapacityExceeded),
+        };
+
         self.order_pool[idx as usize] = order;
         self.order_links[idx as usize] = OrderLink {
             prev: 0,
@@ -154,8 +168,8 @@ impl OrderBookBackend for DenseBackend {
             level_idx: order.level_idx,
             _padding: 0,
         };
-        self.order_map.insert(order.data.order_id, idx);
-        idx
+        self.id_to_index[order_id] = idx;
+        Ok(idx)
     }
 
     #[inline(always)]
@@ -164,7 +178,13 @@ impl OrderBookBackend for DenseBackend {
             return None;
         }
         let order = self.order_pool[order_idx as usize];
-        self.order_map.remove(&order.data.order_id);
+        let order_id = order.data.order_id.0 as usize;
+
+        // 清理物理索引映射
+        if order_id < self.id_to_index.len() {
+            self.id_to_index[order_id] = 0;
+        }
+
         self.free_list.push(order_idx);
         Some(order)
     }
@@ -192,7 +212,14 @@ impl OrderBookBackend for DenseBackend {
 
     #[inline(always)]
     fn get_order_idx_by_id(&self, order_id: OrderId) -> Option<Self::OrderIdx> {
-        self.order_map.get(&order_id).copied()
+        let id = order_id.0 as usize;
+        if id < self.id_to_index.len() {
+            let idx = self.id_to_index[id];
+            if idx != 0 {
+                return Some(idx);
+            }
+        }
+        None
     }
     #[inline(always)]
     fn push_to_level_back(&mut self, level_idx: Self::LevelIdx, order_idx: Self::OrderIdx) {
@@ -379,7 +406,9 @@ impl OrderBookBackend for DenseBackend {
         self.bids_bitset.clear();
         self.asks_bitset.clear();
         self.level_array.fill(None);
-        self.order_map.clear();
+        let mut id_to_index = std::mem::take(&mut self.id_to_index);
+        id_to_index.fill(0);
+        self.id_to_index = id_to_index;
         self.free_list.clear();
         for i in (1..self.order_pool.len() as u32).rev() {
             self.free_list.push(i);
@@ -392,7 +421,9 @@ impl OrderBookBackend for DenseBackend {
             }
             let level_idx = self.get_or_create_level(model_level.side, model_level.price);
             for order_data in model_level.orders {
-                let order_idx = self.insert_order(RestingOrder::new(order_data, level_idx));
+                let order_idx = self
+                    .insert_order(RestingOrder::new(order_data, level_idx))
+                    .unwrap();
                 self.push_to_level_back(level_idx, order_idx);
             }
         }
@@ -405,7 +436,7 @@ mod tests {
     use crate::types::Price;
 
     #[test]
-    fn test_dense_backend_init() {
+    fn test_dense_price_level() {
         let config = PriceRange {
             min: Price(100),
             max: Price(200),
@@ -446,7 +477,7 @@ mod tests {
         let mut data: crate::orders::OrderData = unsafe { std::mem::zeroed() };
         data.order_id = OrderId(42);
 
-        let idx = backend.insert_order(RestingOrder::new(data, 50));
+        let idx = backend.insert_order(RestingOrder::new(data, 50)).unwrap();
         assert!(idx > 0);
         assert_eq!(backend.get_order_idx_by_id(OrderId(42)), Some(idx));
 
@@ -469,12 +500,16 @@ mod tests {
         let mut data1: crate::orders::OrderData = unsafe { std::mem::zeroed() };
         data1.order_id = OrderId(1);
         data1.remaining_qty = Quantity(10);
-        let id1 = backend.insert_order(RestingOrder::new(data1, level));
+        let id1 = backend
+            .insert_order(RestingOrder::new(data1, level))
+            .unwrap();
 
         let mut data2: crate::orders::OrderData = unsafe { std::mem::zeroed() };
         data2.order_id = OrderId(2);
         data2.remaining_qty = Quantity(20);
-        let id2 = backend.insert_order(RestingOrder::new(data2, level));
+        let id2 = backend
+            .insert_order(RestingOrder::new(data2, level))
+            .unwrap();
 
         backend.push_to_level_back(level, id1);
         backend.push_to_level_back(level, id2);

@@ -181,6 +181,7 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
             self.process_triggered_orders(ts, seq, &mut offset);
         }
 
+        // 处理剩余部分
         let final_status = if taker_order.is_fully_filled() {
             OrderStatus::Filled
         } else {
@@ -193,7 +194,9 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
             } else {
                 match taker_order.side {
                     Side::buy | Side::sell => {
-                        self.add_resting_order(taker_order);
+                        if let Err(fail) = self.add_resting_order(taker_order) {
+                            return CommandOutcome::Rejected(fail);
+                        }
                         if taker_order.filled_qty.0 > 0 {
                             OrderStatus::PartiallyFilled
                         } else {
@@ -266,7 +269,9 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
         let final_status = if taker_order.is_fully_filled() {
             OrderStatus::Filled
         } else {
-            self.add_resting_order(taker_order);
+            if let Err(fail) = self.add_resting_order(taker_order) {
+                return CommandOutcome::Rejected(fail);
+            }
             if taker_order.filled_qty.0 > 0 {
                 OrderStatus::PartiallyFilled
             } else {
@@ -409,11 +414,11 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
                     );
                     maker_order.data.visible_qty = Quantity(reload_qty);
 
-                    let new_maker_idx = self.backend.insert_order(maker_order);
+                    let new_maker_idx = self.backend.insert_order(maker_order)?;
                     self.backend.push_to_level_back(level_idx, new_maker_idx);
                 } else {
                     // 普通情况（或 Peak 还有剩余），插回队首保持优先级
-                    let new_maker_idx = self.backend.insert_order(maker_order);
+                    let new_maker_idx = self.backend.insert_order(maker_order)?;
                     self.backend.push_to_level_front(level_idx, new_maker_idx);
                 }
                 break;
@@ -510,7 +515,9 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
                 let final_status = if order.data.is_fully_filled() {
                     OrderStatus::Filled
                 } else {
-                    self.add_resting_order(order.data);
+                    if let Err(fail) = self.add_resting_order(order.data) {
+                        return CommandOutcome::Rejected(fail);
+                    }
                     if order.data.filled_qty.0 > 0 {
                         OrderStatus::PartiallyFilled
                     } else {
@@ -618,7 +625,10 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
                     let _ = self.match_order(&mut triggered_order, ts, seq, offset);
 
                     if !triggered_order.is_fully_filled() {
-                        self.add_resting_order(triggered_order);
+                        if let Err(_e) = self.add_resting_order(triggered_order) {
+                            #[cfg(feature = "dev")]
+                            println!("[Dev] Cascade trigger add_resting_order failed: {:?}", _e);
+                        }
                     }
                 }
             }
@@ -682,14 +692,15 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
     }
 
     /// 内部逻辑：将剩余订单加入下单簿
-    fn add_resting_order(&mut self, order_data: OrderData) {
+    fn add_resting_order(&mut self, order_data: OrderData) -> Result<(), CommandFailure> {
         let level_idx = self
             .backend
             .get_or_create_level(order_data.side, order_data.price);
         let order_idx = self
             .backend
-            .insert_order(RestingOrder::new(order_data, level_idx));
+            .insert_order(RestingOrder::new(order_data, level_idx))?;
         self.backend.push_to_level_back(level_idx, order_idx);
+        Ok(())
     }
 
     // ========== 快照 (Snapshot) 核心逻辑 ==========
