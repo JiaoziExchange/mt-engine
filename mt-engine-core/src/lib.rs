@@ -4,6 +4,10 @@
 #[cfg(all(feature = "snapshot", feature = "dense-node"))]
 compile_error!("'snapshot' (exporting) and 'dense-node' features are mutually exclusive to ensure zero-cost on dense nodes. Use 'serde' feature for loading support on dense nodes.");
 
+#[cfg(feature = "snapshot")]
+#[global_allocator]
+static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 pub mod book;
 pub mod codec;
 pub mod command;

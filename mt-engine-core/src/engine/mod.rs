@@ -14,15 +14,29 @@ use mt_engine::time_in_force::TimeInForce;
 use mt_engine::trade_codec;
 use mt_engine::WriteBuf;
 use rustc_hash::FxHashMap;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 use slab::Slab;
 use std::collections::BTreeMap;
+
+/// 触发链表节点 (用于侵入式双向链表)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct TriggerNode {
+    /// 指向 condition_order_store 的索引
+    pub order_idx: usize,
+    /// 链表前驱 (u32::MAX 表示空)
+    pub prev: u32,
+    /// 链表后继 (u32::MAX 表示空)
+    pub next: u32,
+}
+
+pub const NULL_NODE: u32 = u32::MAX;
 
 #[cfg(feature = "snapshot")]
 use crate::snapshot::SnapshotConfig;
 #[cfg(feature = "serde")]
 use crate::snapshot::SnapshotModel;
-#[cfg(feature = "snapshot")]
-use std::io::Write;
 
 /// 撮合引擎 - 单线程、极致性能状态机
 /// 方案 B：全链路零分配 & SBE 直接编码
@@ -44,14 +58,17 @@ pub struct Engine<'a, B: OrderBookBackend = SparseBackend> {
     /// 预分配触发缓冲区 (避免热路径分配，存储 Slab 索引)
     trigger_index_buffer: Vec<usize>,
 
+    /// 侵入式链表节点池
+    pub(crate) trigger_node_pool: Slab<TriggerNode>,
+
     /// 止损触发池 - 买单 (LTP >= TriggerPrice)
-    pub(crate) stop_buy_triggers: BTreeMap<Price, Vec<usize>>,
+    pub(crate) stop_buy_triggers: BTreeMap<Price, u32>,
     /// 止损触发池 - 卖单 (LTP <= TriggerPrice)
-    pub(crate) stop_sell_triggers: BTreeMap<Price, Vec<usize>>,
+    pub(crate) stop_sell_triggers: BTreeMap<Price, u32>,
     /// 止盈触发池 - 买单 (LTP <= TriggerPrice)
-    pub(crate) tp_buy_triggers: BTreeMap<Price, Vec<usize>>,
+    pub(crate) tp_buy_triggers: BTreeMap<Price, u32>,
     /// 止盈触发池 - 卖单 (LTP >= TriggerPrice)
-    pub(crate) tp_sell_triggers: BTreeMap<Price, Vec<usize>>,
+    pub(crate) tp_sell_triggers: BTreeMap<Price, u32>,
 
     #[cfg(feature = "snapshot")]
     pub snapshot_config: Option<SnapshotConfig>,
@@ -63,8 +80,8 @@ pub struct Engine<'a, B: OrderBookBackend = SparseBackend> {
     pub(crate) snapshotting_pid: libc::pid_t,
     /// 最后分配的订单 ID (用于单调性校验)
     pub(crate) last_order_id: OrderId,
-    /// 待触发条件单 ID 映射 (OrderId -> Slab Index)
-    pub(crate) pending_stop_map: FxHashMap<OrderId, usize>,
+    /// 待触发条件单 ID 映射 (OrderId -> (OrderStoreIndex, NodeIndex))
+    pub(crate) pending_stop_map: FxHashMap<OrderId, (usize, u32)>,
 }
 
 impl<'a, B: OrderBookBackend> Engine<'a, B> {
@@ -81,6 +98,7 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
             tp_sell_triggers: BTreeMap::new(),
             ltp: Price(0),
             condition_order_store: Slab::with_capacity(1024),
+            trigger_node_pool: Slab::with_capacity(1024),
             trigger_index_buffer: Vec::with_capacity(64),
             #[cfg(feature = "snapshot")]
             snapshot_config: None,
@@ -457,9 +475,11 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
                 timestamp: ts,
                 payload: &[],
             })
-        } else if let Some(s_idx) = self.pending_stop_map.remove(&order_id) {
-            // 从条件单池中移除，触发时将失效
-            self.condition_order_store.try_remove(s_idx);
+        } else if let Some((s_idx, node_idx)) = self.pending_stop_map.remove(&order_id) {
+            // 从条件单池中彻底移除，并同步清理触发索引以防内存泄漏
+            if let Some(order) = self.condition_order_store.try_remove(s_idx) {
+                self.unregister_condition_trigger(node_idx, &order);
+            }
 
             CommandOutcome::Applied(CommandReport {
                 order_id,
@@ -501,14 +521,19 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
                 })
             } else {
                 let old_level_idx = current_order.level_idx;
+                let old_data = current_order.data; // 备份原数据用于失败回滚
                 self.backend.remove_from_level(old_level_idx, order_idx);
                 let mut order = self.backend.remove_order(order_idx).expect("Exists");
                 self.backend.remove_empty_level(old_level_idx);
+
+                let original_ltp = self.ltp; // 记录改单前的 LTP
                 order.data.price = new_price;
                 order.data.remaining_qty = new_qty;
 
                 let mut offset = 0usize;
                 if let Err(fail) = self.match_order(&mut order.data, ts, seq, &mut offset) {
+                    // [回滚逻辑]：如果匹配过程出错（如 PostOnly 冲突），将原数据重新挂起
+                    let _ = self.add_resting_order(old_data);
                     return CommandOutcome::Rejected(fail);
                 }
 
@@ -516,6 +541,8 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
                     OrderStatus::Filled
                 } else {
                     if let Err(fail) = self.add_resting_order(order.data) {
+                        // [回滚逻辑]：如果挂单失败，恢复原单
+                        let _ = self.add_resting_order(old_data);
                         return CommandOutcome::Rejected(fail);
                     }
                     if order.data.filled_qty.0 > 0 {
@@ -524,6 +551,11 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
                         OrderStatus::New
                     }
                 };
+
+                // [触发补全]：如果 LTP 发生变化，触发止损/止盈 logic
+                if self.ltp != original_ltp {
+                    self.process_triggered_orders(ts, seq, &mut offset);
+                }
 
                 #[cfg(all(feature = "snapshot", not(feature = "dense-node")))]
                 self.check_snapshot_trigger();
@@ -563,11 +595,8 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
                 if first_price > self.ltp {
                     break;
                 }
-                if let Some(mut idxs) = self.stop_buy_triggers.remove(&first_price) {
-                    for &idx in &idxs {
-                        self.prefetch_condition_order(idx);
-                    }
-                    self.trigger_index_buffer.append(&mut idxs);
+                if let Some(head_node_idx) = self.stop_buy_triggers.remove(&first_price) {
+                    self.collect_and_recycle_trigger_list(head_node_idx);
                 }
             }
 
@@ -576,11 +605,8 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
                 if last_price < self.ltp {
                     break;
                 }
-                if let Some(mut idxs) = self.tp_buy_triggers.remove(&last_price) {
-                    for &idx in &idxs {
-                        self.prefetch_condition_order(idx);
-                    }
-                    self.trigger_index_buffer.append(&mut idxs);
+                if let Some(head_node_idx) = self.tp_buy_triggers.remove(&last_price) {
+                    self.collect_and_recycle_trigger_list(head_node_idx);
                 }
             }
 
@@ -589,11 +615,8 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
                 if last_price < self.ltp {
                     break;
                 }
-                if let Some(mut idxs) = self.stop_sell_triggers.remove(&last_price) {
-                    for &idx in &idxs {
-                        self.prefetch_condition_order(idx);
-                    }
-                    self.trigger_index_buffer.append(&mut idxs);
+                if let Some(head_node_idx) = self.stop_sell_triggers.remove(&last_price) {
+                    self.collect_and_recycle_trigger_list(head_node_idx);
                 }
             }
 
@@ -602,11 +625,8 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
                 if first_price > self.ltp {
                     break;
                 }
-                if let Some(mut idxs) = self.tp_sell_triggers.remove(&first_price) {
-                    for &idx in &idxs {
-                        self.prefetch_condition_order(idx);
-                    }
-                    self.trigger_index_buffer.append(&mut idxs);
+                if let Some(head_node_idx) = self.tp_sell_triggers.remove(&first_price) {
+                    self.collect_and_recycle_trigger_list(head_node_idx);
                 }
             }
 
@@ -640,6 +660,26 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
         }
     }
 
+    /// 辅助逻辑：遍历链表，收集索引并回收节点
+    fn collect_and_recycle_trigger_list(&mut self, head_node_idx: u32) {
+        let mut cur = head_node_idx;
+        while cur != NULL_NODE {
+            let node = if let Some(n) = self.trigger_node_pool.get(cur as usize) {
+                *n
+            } else {
+                break;
+            };
+
+            self.prefetch_condition_order(node.order_idx);
+            self.trigger_index_buffer.push(node.order_idx);
+
+            let next = node.next;
+            // 物理回收触发节点到 Slab 池
+            self.trigger_node_pool.remove(cur as usize);
+            cur = next;
+        }
+    }
+
     #[inline(always)]
     fn prefetch_condition_order(&self, idx: usize) {
         if let Some(_entry) = self.condition_order_store.get(idx) {
@@ -649,46 +689,102 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
                 use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
                 _mm_prefetch(_entry as *const _ as *const i8, _MM_HINT_T0);
             }
+            #[cfg(target_arch = "aarch64")]
+            unsafe {
+                // aarch64 预取指令：pldl1keep (Read, L1, Keep)
+                core::arch::asm!("prfm pldl1keep, [{0}]", in(reg) _entry);
+            }
         }
     }
 
     /// 内部逻辑：注册条件单到触发池
     fn register_condition_order(&mut self, order: OrderData) {
         let order_id = order.order_id;
-        let idx = self.condition_order_store.insert(order);
-        self.pending_stop_map.insert(order_id, idx);
+        let trigger_price = order.trigger_price;
+        let side = order.side;
 
-        match order.side {
+        let idx = self.condition_order_store.insert(order);
+        let node_idx = self.trigger_node_pool.insert(TriggerNode {
+            order_idx: idx,
+            prev: NULL_NODE,
+            next: NULL_NODE,
+        }) as u32;
+
+        self.pending_stop_map.insert(order_id, (idx, node_idx));
+
+        let triggers = match side {
             Side::buy => {
-                if order.trigger_price >= self.ltp {
-                    self.stop_buy_triggers
-                        .entry(order.trigger_price)
-                        .or_default()
-                        .push(idx);
+                if trigger_price >= self.ltp {
+                    &mut self.stop_buy_triggers
                 } else {
-                    self.tp_buy_triggers
-                        .entry(order.trigger_price)
-                        .or_default()
-                        .push(idx);
+                    &mut self.tp_buy_triggers
                 }
             }
             Side::sell => {
-                if order.trigger_price <= self.ltp {
-                    self.stop_sell_triggers
-                        .entry(order.trigger_price)
-                        .or_default()
-                        .push(idx);
+                if trigger_price <= self.ltp {
+                    &mut self.stop_sell_triggers
                 } else {
-                    self.tp_sell_triggers
-                        .entry(order.trigger_price)
-                        .or_default()
-                        .push(idx);
+                    &mut self.tp_sell_triggers
                 }
             }
-            _ => {
-                self.condition_order_store.remove(idx);
+            _ => return,
+        };
+
+        let entry = triggers.entry(trigger_price).or_insert(NULL_NODE);
+        if *entry != NULL_NODE {
+            // 将新节点插在链表头部
+            self.trigger_node_pool[node_idx as usize].next = *entry;
+            self.trigger_node_pool[*entry as usize].prev = node_idx;
+        }
+        *entry = node_idx;
+    }
+
+    /// 内部逻辑：从触发池中卸载条件单 (O(1) 复杂度)
+    fn unregister_condition_trigger(&mut self, node_idx: u32, order: &OrderData) {
+        let node = if let Some(n) = self.trigger_node_pool.get(node_idx as usize) {
+            *n
+        } else {
+            return;
+        };
+
+        let prev = node.prev;
+        let next = node.next;
+
+        if prev != NULL_NODE {
+            self.trigger_node_pool[prev as usize].next = next;
+        } else {
+            // 如果是头节点，需要更新 BTreeMap 中的头指针
+            let triggers = match order.side {
+                Side::buy => {
+                    if order.trigger_price >= self.ltp {
+                        &mut self.stop_buy_triggers
+                    } else {
+                        &mut self.tp_buy_triggers
+                    }
+                }
+                Side::sell => {
+                    if order.trigger_price <= self.ltp {
+                        &mut self.stop_sell_triggers
+                    } else {
+                        &mut self.tp_sell_triggers
+                    }
+                }
+                _ => return,
+            };
+
+            if next == NULL_NODE {
+                triggers.remove(&order.trigger_price);
+            } else {
+                triggers.insert(order.trigger_price, next);
             }
         }
+
+        if next != NULL_NODE {
+            self.trigger_node_pool[next as usize].prev = prev;
+        }
+
+        // 回收节点到 Slab 池
+        self.trigger_node_pool.remove(node_idx as usize);
     }
 
     /// 内部逻辑：将剩余订单加入下单簿
@@ -737,7 +833,7 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
     }
 
     /// 触发快照 (Fork-based CoW)
-    /// 仅在开启 snapshot 特性且 backend 支持导出且非 dense-node 时有效
+    /// 硬化处理：采用流式 I/O 极大降低子进程 RSS 峰值，防止 OOM
     #[cfg(all(feature = "snapshot", not(feature = "dense-node")))]
     pub fn trigger_snapshot(&mut self) -> Result<(), String> {
         let ts = self.last_timestamp.0;
@@ -759,97 +855,59 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
             .unwrap_or(true);
 
         #[cfg(feature = "dev")]
-        println!(
-            "[Dev] Triggering snapshot: seq={}, ts={}, path={}",
-            seq, ts, path
-        );
+        println!("[Dev] Snapshot triggered via CoW fork: path={}", path);
 
         unsafe {
             let pid = libc::fork();
-            if pid == 0 {
-                #[cfg(feature = "dev")]
-                println!("[Dev] Snapshot child started: pid={}", libc::getpid());
-
-                // 子进程逻辑：在子进程中完成数据搜集，彻底消灭对父进程热路径的干扰
-
-                // 1. 设置 CPU 亲和性 (可选，仅 Linux 支持)
-                #[cfg(target_os = "linux")]
-                if let Ok(cpu_id_str) = std::env::var("SNAPSHOT_CHILD_CPU_ID") {
-                    if let Ok(cpu_id) = cpu_id_str.parse::<usize>() {
-                        let mut cpuset: libc::cpu_set_t = std::mem::zeroed();
-                        libc::CPU_SET(cpu_id, &mut cpuset);
-                        libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &cpuset);
-                    }
-                }
-
-                // 2. 搜集数据构建模型 (在子进程执行)
-                let model = SnapshotModel {
-                    last_sequence_number: self.last_sequence_number,
-                    last_timestamp: self.last_timestamp,
-                    trade_id_seq: self.trade_id_seq,
-                    ltp: self.ltp,
-                    levels: self.backend.export_levels(),
-                    condition_orders: {
-                        let mut v = Vec::with_capacity(self.condition_order_store.len());
-                        for (_, o) in self.condition_order_store.iter() {
-                            v.push(*o);
-                        }
-                        v
-                    },
-                };
-
-                #[cfg(feature = "dev")]
-                println!("[Dev] Snapshot data collection complete");
-
-                // 3. 序列化
-                let serialized = bincode::serialize(&model).unwrap();
-
-                #[cfg(feature = "dev")]
-                println!(
-                    "[Dev] Snapshot serialization complete (size: {} bytes)",
-                    serialized.len()
-                );
-
-                // 4. 确保目录存在并写入
-                let snapshot_path = std::path::Path::new(&path);
-                if let Some(parent) = snapshot_path.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-
-                let result = std::fs::File::create(&path).and_then(|file| {
-                    if compress {
-                        let mut encoder = zstd::Encoder::new(file, 3)?;
-                        encoder.write_all(&serialized)?;
-                        encoder.finish()?;
-                    } else {
-                        let mut writer = std::io::BufWriter::new(file);
-                        writer.write_all(&serialized)?;
-                    }
-                    Ok(())
-                });
-
-                if let Err(e) = result {
-                    eprintln!("[Snapshot Child] Failed to save snapshot: {}", e);
-                    libc::_exit(1);
-                }
-
-                #[cfg(feature = "dev")]
-                println!("[Dev] Snapshot child write complete: {}", path);
-
-                libc::_exit(0);
-            } else if pid < 0 {
+            if pid < 0 {
                 return Err("Fork failed".to_string());
+            }
+
+            if pid == 0 {
+                // 子进程逻辑：避免在堆上产生巨大的中间状态
+                let result = (|| -> Result<(), String> {
+                    // 确保目录存在
+                    let snapshot_path = std::path::Path::new(&path);
+                    if let Some(parent) = snapshot_path.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+
+                    let file = std::fs::File::create(&path).map_err(|e| e.to_string())?;
+                    let buf_writer = std::io::BufWriter::with_capacity(1024 * 1024, file);
+
+                    // 利用 Box<dyn Write> 构建流式处理链
+                    let mut writer: Box<dyn std::io::Write> = if compress {
+                        let encoder =
+                            zstd::stream::Encoder::new(buf_writer, 3).map_err(|e| e.to_string())?;
+                        Box::new(encoder.auto_finish())
+                    } else {
+                        Box::new(buf_writer)
+                    };
+
+                    let model = self.to_snapshot();
+
+                    // 流式序列化：数据直接从结构体流向压缩器与磁盘
+                    bincode::serialize_into(&mut writer, &model).map_err(|e| e.to_string())?;
+                    writer.flush().map_err(|e| e.to_string())?;
+
+                    Ok(())
+                })();
+
+                match result {
+                    Ok(_) => libc::_exit(0),
+                    Err(e) => {
+                        eprintln!("[Snapshot Child] Critical Error: {}", e);
+                        libc::_exit(1);
+                    }
+                }
             } else {
-                // 父进程：记录子进程 PID 供状态检查
+                // 父进程：立即回归热路径
                 self.snapshotting_pid = pid;
-                #[cfg(feature = "dev")]
-                println!("[Dev] Parent continuing, child pid={}", pid);
+                self.uncommitted_commands = 0;
+                self.last_snapshot_ts = ts;
+                Ok(())
             }
         }
-
-        self.uncommitted_commands = 0;
-        self.last_snapshot_ts = ts;
-        Ok(())
     }
 
     #[cfg(all(feature = "snapshot", not(feature = "dense-node")))]

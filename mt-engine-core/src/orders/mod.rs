@@ -22,6 +22,10 @@ pub struct OrderData {
     pub filled_qty: Quantity,
     /// 价格 (Limit Price)
     pub price: Price,
+    /// 触发价格 (Stop/StopLimit)
+    pub trigger_price: Price,
+    /// 有效期截止时间戳 (GTD/GTH)
+    pub expiry: Timestamp,
     /// 冰山单可见数量 (Current Visible Peak)
     pub visible_qty: Quantity,
     /// 冰山单峰值大小 (Original Peak Size)
@@ -42,10 +46,6 @@ pub struct OrderData {
     pub sequence_number: SequenceNumber,
     /// 提交时间戳
     pub timestamp: Timestamp,
-    /// 有效期截止时间戳 (GTD/GTH)
-    pub expiry: Timestamp,
-    /// 触发价格 (Stop/StopLimit)
-    pub trigger_price: Price,
 }
 
 impl OrderData {
