@@ -239,6 +239,7 @@ impl OrderBookBackend for SparseBackend {
         true
     }
 
+    #[cfg(feature = "serde")]
     fn export_levels(&self) -> Vec<crate::snapshot::PriceLevelModel> {
         let mut model_levels = Vec::with_capacity(self.bids.len() + self.asks.len());
 
@@ -277,6 +278,7 @@ impl OrderBookBackend for SparseBackend {
         model_levels
     }
 
+    #[cfg(feature = "serde")]
     fn import_levels(&mut self, levels: Vec<crate::snapshot::PriceLevelModel>) {
         // 清空现有状态
         self.orders.clear();

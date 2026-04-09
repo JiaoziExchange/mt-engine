@@ -369,6 +369,7 @@ impl OrderBookBackend for DenseBackend {
         price >= self.config.min && price <= self.config.max
     }
 
+    #[cfg(feature = "serde")]
     fn import_levels(&mut self, levels: Vec<crate::snapshot::PriceLevelModel>) {
         // 清空现有状态 (保持预分配的池子大小)
         self.bids_bitset.clear();

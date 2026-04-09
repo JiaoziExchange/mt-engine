@@ -16,8 +16,10 @@ use mt_engine::WriteBuf;
 use slab::Slab;
 use std::collections::BTreeMap;
 
+#[cfg(feature = "serde")]
+use crate::snapshot::SnapshotModel;
 #[cfg(feature = "snapshot")]
-use crate::snapshot::{SnapshotConfig, SnapshotModel};
+use crate::snapshot::SnapshotConfig;
 #[cfg(feature = "snapshot")]
 use std::io::Write;
 
@@ -663,7 +665,7 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
 
     // ========== 快照 (Snapshot) 核心逻辑 ==========
 
-    #[cfg(feature = "snapshot")]
+    #[cfg(feature = "serde")]
     pub fn to_snapshot(&self) -> SnapshotModel {
         SnapshotModel {
             last_sequence_number: self.last_sequence_number,
@@ -679,7 +681,7 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
         }
     }
 
-    #[cfg(feature = "snapshot")]
+    #[cfg(feature = "serde")]
     pub fn from_snapshot(&mut self, model: SnapshotModel) {
         self.last_sequence_number = model.last_sequence_number;
         self.last_timestamp = model.last_timestamp;
@@ -853,6 +855,8 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
         println!("LTP:         {}", self.ltp.0);
         println!("Cond Orders: {}", self.condition_order_store.len());
         println!("Trade ID:    {}", self.trade_id_seq);
+        #[cfg(feature = "serde")]
+        println!("Has Config:  {}", self.snapshot_config.is_some());
         #[cfg(feature = "snapshot")]
         {
             println!("Uncommitted: {}", self.uncommitted_commands);

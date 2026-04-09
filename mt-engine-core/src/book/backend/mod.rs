@@ -1,6 +1,4 @@
 use crate::orders::RestingOrder;
-#[allow(unused_imports)]
-use crate::snapshot::SnapshotModel;
 use crate::types::{Price, Quantity};
 use mt_engine::side::Side;
 
@@ -85,10 +83,12 @@ pub trait OrderBookBackend {
     // ========== 快照 (Snapshot) 支持 ==========
 
     /// 将后端状态转换为中立的快照模型中的档位数据
+    #[cfg(feature = "serde")]
     fn export_levels(&self) -> Vec<crate::snapshot::PriceLevelModel> {
         unimplemented!("Snapshot exporting is not supported by this backend")
     }
 
     /// 从中立的快照模型中的档位数据恢复后端状态
+    #[cfg(feature = "serde")]
     fn import_levels(&mut self, levels: Vec<crate::snapshot::PriceLevelModel>);
 }
