@@ -113,6 +113,32 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
         }
     }
 
+    #[inline(always)]
+    pub fn get_last_seq(&self) -> SequenceNumber {
+        self.last_sequence_number
+    }
+
+    #[inline(always)]
+    pub fn get_last_ts(&self) -> Timestamp {
+        self.last_timestamp
+    }
+
+    #[inline(always)]
+    pub fn get_last_order_id(&self) -> OrderId {
+        self.last_order_id
+    }
+
+    #[inline(always)]
+    pub fn get_ltp(&self) -> Price {
+        self.ltp
+    }
+
+    /// 获取特定价格档位的总深度
+    #[inline(always)]
+    pub fn get_depth(&self, side: Side, price: Price) -> u64 {
+        self.backend.get_total_depth(side, price)
+    }
+
     /// 预检查 FOK 深度是否满足
     fn check_fok_fillable(
         &self,
