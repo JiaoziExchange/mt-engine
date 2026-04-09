@@ -1,0 +1,3 @@
+[workspace]
+members = ["mt-engine-core", "mt-engine-sbe"]
+resolver = "2"

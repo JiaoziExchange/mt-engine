@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<messageSchema xmlns="http://fixprotocol.io/2016/sbe"
+                   package="mt_engine"
+                   id="1"
+                   version="1"
+                   semanticVersion="1.0.0"
+                   description="MT-Engine Binary Protocol"
+                   byteOrder="littleEndian">
+
+    <types>
+
+        <!-- ====== 基础类型别名 ====== -->
+
+        <type name="Price" primitiveType="uint64" semanticType="Price"/>
+        <type name="Quantity" primitiveType="uint64" semanticType="Quantity"/>
+        <type name="OrderId" primitiveType="uint64" semanticType="OrderId"/>
+        <type name="SequenceNumber" primitiveType="uint64" semanticType="SequenceNumber"/>
+        <type name="Timestamp" primitiveType="uint64" semanticType="Timestamp"/>
+        <type name="UserId" primitiveType="uint64" semanticType="UserId"/>
+        <type name="BatchId" primitiveType="uint64" semanticType="BatchId"/>
+        <type name="StatusCode" primitiveType="uint8" semanticType="StatusCode"/>
+        <type name="ErrorCode" primitiveType="uint8" semanticType="ErrorCode"/>
+        <type name="ExpiryTime" primitiveType="uint64" semanticType="ExpiryTime"/>
+
+        <!-- ====== 枚举类型 ====== -->
+
+        <enum name="Side" encodingType="uint8" semanticType="Side">
+            <validValue name="buy">0</validValue>
+            <validValue name="sell">1</validValue>
+        </enum>
+
+        <enum name="OrderType" encodingType="uint8" semanticType="OrderType">
+            <validValue name="market">0</validValue>
+            <validValue name="limit">1</validValue>
+            <validValue name="stop">2</validValue>
+            <validValue name="stop_limit">3</validValue>
+        </enum>
+
+        <enum name="TimeInForce" encodingType="uint8" semanticType="TimeInForce">
+            <validValue name="ioc">0</validValue>
+            <validValue name="fok">1</validValue>
+            <validValue name="gtc">2</validValue>
+            <validValue name="gtd">3</validValue>
+            <validValue name="gth">4</validValue>
+        </enum>
+
+        <enum name="OrderStatus" encodingType="uint8" semanticType="OrderStatus">
+            <validValue name="pending">0</validValue>
+            <validValue name="order_new">1</validValue>
+            <validValue name="partially_filled">2</validValue>
+            <validValue name="filled">3</validValue>
+            <validValue name="cancelled">4</validValue>
+            <validValue name="rejected">5</validValue>
+            <validValue name="expired">6</validValue>
+            <validValue name="traded">7</validValue>
+        </enum>
+
+        <!-- ====== 位集合类型 ====== -->
+
+        <set name="OrderFlags" encodingType="uint16" semanticType="Flags">
+            <choice name="post_only">0</choice>
+            <choice name="reduce_only">1</choice>
+            <choice name="iceberg">2</choice>
+            <choice name="hidden">3</choice>
+            <choice name="marketable">4</choice>
+            <choice name="disable_self_trade">5</choice>
+        </set>
+
+        <set name="CommandFlags" encodingType="uint8" semanticType="CommandFlags">
+            <choice name="test_mode">0</choice>
+            <choice name="force">1</choice>
+            <choice name="no_confirmation">2</choice>
+        </set>
+
+        <!-- ====== 复合类型 ====== -->
+
+        <composite name="messageHeader">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="templateId" primitiveType="uint16"/>
+            <type name="schemaId" primitiveType="uint16"/>
+            <type name="version" primitiveType="uint16"/>
+        </composite>
+
+        <composite name="GroupSizeEncoding">
+            <type name="blockLength" primitiveType="uint16"/>
+            <type name="numInGroup" primitiveType="uint16"/>
+        </composite>
+
+        <composite name="VarDataEncoding">
+            <type name="length" primitiveType="uint16"/>
+            <type name="varData" primitiveType="uint8" length="0" characterEncoding="UTF-8"/>
+        </composite>
+
+    </types>
+
+    <message name="OrderSubmit" id="1" blockLength="64">
+        <field name="order_id" id="1" type="OrderId"/>
+        <field name="user_id" id="2" type="UserId"/>
+        <field name="side" id="3" type="Side"/>
+        <field name="order_type" id="4" type="OrderType"/>
+        <field name="price" id="5" type="Price"/>
+        <field name="quantity" id="6" type="Quantity"/>
+        <field name="time_in_force" id="7" type="TimeInForce"/>
+        <field name="flags" id="8" type="OrderFlags"/>
+        <field name="timestamp" id="9" type="Timestamp"/>
+        <field name="sequence_number" id="10" type="SequenceNumber"/>
+    </message>
+
+    <message name="OrderCancel" id="2" blockLength="24">
+        <field name="order_id" id="1" type="OrderId"/>
+        <field name="timestamp" id="2" type="Timestamp"/>
+        <field name="sequence_number" id="3" type="SequenceNumber"/>
+    </message>
+
+    <message name="OrderAmend" id="3" blockLength="40">
+        <field name="order_id" id="1" type="OrderId"/>
+        <field name="new_price" id="2" type="Price"/>
+        <field name="new_quantity" id="3" type="Quantity"/>
+        <field name="timestamp" id="4" type="Timestamp"/>
+        <field name="sequence_number" id="5" type="SequenceNumber"/>
+    </message>
+
+    <message name="OrderSubmitGtd" id="4" blockLength="72">
+        <field name="order_id" id="1" type="OrderId"/>
+        <field name="user_id" id="2" type="UserId"/>
+        <field name="side" id="3" type="Side"/>
+        <field name="order_type" id="4" type="OrderType"/>
+        <field name="price" id="5" type="Price"/>
+        <field name="quantity" id="6" type="Quantity"/>
+        <field name="time_in_force" id="7" type="TimeInForce"/>
+        <field name="flags" id="8" type="OrderFlags"/>
+        <field name="expiry_time" id="9" type="ExpiryTime"/>
+        <field name="timestamp" id="10" type="Timestamp"/>
+        <field name="sequence_number" id="11" type="SequenceNumber"/>
+    </message>
+
+    <message name="Trade" id="101" blockLength="64">
+        <field name="trade_id" id="1" type="OrderId"/>
+        <field name="maker_order_id" id="2" type="OrderId"/>
+        <field name="taker_order_id" id="3" type="OrderId"/>
+        <field name="side" id="4" type="Side"/>
+        <field name="price" id="5" type="Price"/>
+        <field name="quantity" id="6" type="Quantity"/>
+        <field name="timestamp" id="7" type="Timestamp"/>
+        <field name="sequence_number" id="8" type="SequenceNumber"/>
+    </message>
+
+</messageSchema>

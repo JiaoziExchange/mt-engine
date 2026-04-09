@@ -1,0 +1,41 @@
+#!/bin/bash
+#
+# SBE Tool Docker Image
+FROM eclipse-temurin:17-jdk
+
+LABEL maintainer="MT-Engine Team"
+LABEL description="Simple Binary Encoding (SBE) Tool"
+
+RUN apt-get update && apt-get install -y wget && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /sbe
+
+# Download the "all-in-one" SBE JAR which includes dependencies
+RUN echo "Downloading SBE tool 1.37.1..." && \
+    wget -q -O sbe-all-1.37.1.jar https://repo1.maven.org/maven2/uk/co/real-logic/sbe-all/1.37.1/sbe-all-1.37.1.jar && \
+    echo "SBE tool downloaded successfully."
+
+# Create output directory
+RUN mkdir -p /sbe/output
+
+# Expose output directory as volume
+VOLUME ["/sbe/output"]
+
+# Wrapper script to handle -D properties correctly
+# -D must come BEFORE -jar, but command line args come after
+RUN echo '#!/bin/bash\n\
+JAVA_OPTS=""\n\
+SCHEMA_FILE=""\n\
+for arg in "$@"; do\n\
+    case $arg in\n\
+        -D*)\n\
+            JAVA_OPTS="$JAVA_OPTS $arg"\n\
+            ;;\n\
+        *)\n\
+            SCHEMA_FILE="$arg"\n\
+            ;;\n\
+    esac\n\
+done\n\
+exec java $JAVA_OPTS -jar /sbe/sbe-all-1.37.1.jar $SCHEMA_FILE\n' > /sbe/sbe-wrapper.sh && chmod +x /sbe/sbe-wrapper.sh
+
+ENTRYPOINT ["/sbe/sbe-wrapper.sh"]

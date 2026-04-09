@@ -1,0 +1,10 @@
+[package]
+name = "mt_engine"
+version = "0.1.0"
+authors = ["sbetool"]
+description = "MT-Engine Binary Protocol"
+edition = "2021"
+
+[lib]
+name = "mt_engine"
+path = "src/lib.rs"

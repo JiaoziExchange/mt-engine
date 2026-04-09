@@ -1,0 +1,17 @@
+[package]
+name = "mt-engine-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+mt_engine = { path = "../mt-engine-sbe" }
+slab = "0.4"
+rustc-hash = "1.1"
+derive_more = "0.99"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "matching_engine"
+harness = false
