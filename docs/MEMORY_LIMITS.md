@@ -17,21 +17,28 @@ $$TotalMemory = (Capacity \times OrderSize) + (Capacity \times LinkSize) + (MaxP
 - **MaxPriceDepth**: Total price steps (ticks) within the configured `PriceRange`.
 
 #### Structural Constants (Internal):
-- `OrderSize`: 56 Bytes
-- `LinkSize`: 16 Bytes
+- `OrderSize`: 128 Bytes (Dual cache-line aligned)
+- `LinkSize`: 16 Bytes (Dense mode only)
 - `LevelSize`: 40 Bytes
 - `IndexSize (u32)`: 4 Bytes
+- `TriggerNodeSize`: 16 Bytes (Sparse mode condition orders)
 
 ---
 
-## Example Allocation Case
+## Example Allocation Case (Dense Node)
 
 | Metric | Value | Memory Usage |
 | :--- | :--- | :--- |
-| **Active Orders (Capacity)** | 1,000,000 | ~72.0 MB |
+| **Active Orders (Capacity)** | 1,000,000 | **~128.0 MB** |
 | **Price Steps (Depth)** | 1,000,000 | ~40.0 MB |
-| **Index Mapping (Pre-allocated)** | 1,000,000 | **~4.0 MB** |
-| **Total Core Footprint** | - | **~116.0 MB** |
+| **Index Mapping (Pre-allocated)** | 1,000,000 | ~4.0 MB |
+| **Total Core Footprint** | - | **~172.0 MB** |
+
+## Example Allocation Case (Sparse Node)
+
+The sparse node uses dynamic allocation (Slab) for orders and triggers:
+- **Order Store**: ~128MB per 1M active orders.
+- **Condition Triggers**: ~16MB per 1M active triggers (Slab pool).
 
 > [!IMPORTANT]
 > **Implicit ID Mapping Contract**: By tying the lookup table directly to the order capacity, the Engine assumes that the OMS ensures `OrderId` values sent to the engine do not exceed the `capacity` for that session. If IDs are not recycled and exceed the capacity, the engine will gracefully reject with `InvalidOrderId`.

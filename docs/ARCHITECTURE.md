@@ -124,9 +124,9 @@ To cater to different asset liquidity characteristics, MT-Engine implements a du
 |------|---------------|-----------------|
 | **Price Lookup** | L3 Bitset | BTreeMap |
 | **Order Mapping** | Array + Free List | Slab + HashMap |
-| **Queue Structure**| Intrusive Doubly Linked List | VecDeque |
-| **Memory Alloc** | Pre-allocated | Dynamic |
-| **Latency Expectation** | < 30ns | < 50ns |
+| **Queue Structure**| Intrusive Doubly Linked List | VecDeque / Intrusive Triggers |
+| **Memory Alloc** | Pre-allocated | Dynamic (Slab Pool) |
+| **Latency Expectation** | < 30ns | < 100ns (Optimized) |
 | **Best For** | Mainstream assets (BTC/ETH) | Altcoins/NFTs/Long-tail |
 
 ### 3.3 SoA vs AoS Optimization
@@ -185,6 +185,7 @@ pub struct OrderData {
     pub user_id: UserId,        
     pub sequence_number: SequenceNumber,
     pub timestamp: Timestamp,
+    pub _reserved: [u8; 32],    // Reserved for alignment & future use
 }
 ```
 
@@ -209,7 +210,7 @@ By hiding memory access latency behind CPU execution, MT-Engine achieves its sub
 |------|--------|-------|
 | Best Bid/Ask | O(log N) | **O(1)** |
 | Insert Order | O(log N) | O(1) |
-| Cancel Order | O(N) | **O(1)** |
+| Cancel Order | **O(1)** (Intrusive) | **O(1)** |
 | Match Execution| O(M log N) | O(M) |
 
 *Where N is the number of active price levels, and M is the number of matched resting orders.*
@@ -225,3 +226,14 @@ By hiding memory access latency behind CPU execution, MT-Engine achieves its sub
 | Post-Only | An order that will not consume liquidity. |
 | Maker | A party providing liquidity. |
 | Taker | A party consuming liquidity. |
+---
+
+## 7. Hardening & Stability
+
+### 7.1 Snapshot Hardening
+- **Allocator Barrier**: Uses `jemalloc` with `atfork` handlers to ensure safe forking without deadlocks during `bincode` serialization.
+- **Streaming I/O**: Implements `bincode::serialize_into` with `BufWriter` to minimize child process RSS peak, preventing OOM.
+
+### 7.2 Transactional Consistency
+- **Rollback Mechanism**: `execute_amend` rollback logic ensures that original orders are restored if matching fails due to `PostOnly` or other constraints.
+- **Trigger Integrity**: Guaranteed cascade triggers for stop-loss/take-profit orders during LTP updates.
