@@ -2,24 +2,34 @@ use super::OrderBookBackend;
 use crate::orders::RestingOrder;
 use crate::types::{OrderId, Price, Quantity};
 use mt_engine::side::Side;
+use rkyv::{Archive, Deserialize, Serialize};
 use rustc_hash::FxHashMap;
 use slab::Slab;
 use std::collections::{BTreeMap, VecDeque};
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
+
 /// 价格档位内部结构
-struct PriceLevel<OrderIdx> {
-    queue: VecDeque<OrderIdx>,
-    total_qty: u64,
-    price: Price, // 存储价格以支持 O(log N) 移除 [NEW]
+#[derive(Debug, Clone, Archive, Serialize, Deserialize)]
+#[cfg_attr(feature = "serde", derive(SerdeSerialize, SerdeDeserialize))]
+pub struct PriceLevel<OrderIdx> {
+    pub queue: VecDeque<OrderIdx>,
+    pub total_qty: u64,
+    pub price: Price, // 存储价格以支持 O(log N) 移除
 }
 
 /// 稀疏下单簿后端 - 基于 BTreeMap 和 Slab 实现
+#[derive(Debug, Clone, Archive, Serialize, Deserialize)]
+#[cfg_attr(feature = "serde", derive(SerdeSerialize, SerdeDeserialize))]
 pub struct SparseBackend {
-    orders: Slab<RestingOrder<usize>>,
-    levels: Slab<PriceLevel<usize>>,
-    bids: BTreeMap<Price, usize>,         // Price -> LevelIdx
-    asks: BTreeMap<Price, usize>,         // Price -> LevelIdx
-    order_map: FxHashMap<OrderId, usize>, // OrderId -> OrderIdx
+    #[with(crate::snapshot::rkyv_util::SlabWrapper)]
+    pub orders: Slab<RestingOrder<usize>>,
+    #[with(crate::snapshot::rkyv_util::SlabWrapper)]
+    pub levels: Slab<PriceLevel<usize>>,
+    pub bids: BTreeMap<Price, usize>,         // Price -> LevelIdx
+    pub asks: BTreeMap<Price, usize>,         // Price -> LevelIdx
+    pub order_map: FxHashMap<OrderId, usize>, // OrderId -> OrderIdx
 }
 
 impl Default for SparseBackend {
@@ -37,6 +47,46 @@ impl SparseBackend {
             asks: BTreeMap::new(),
             order_map: FxHashMap::default(),
         }
+    }
+
+    /// 从归档的影子类型恢复状态 (影子类型隔离策略)
+    #[cfg(feature = "rkyv")]
+    pub fn recovery_from_archived(
+        &mut self,
+        archived: &rkyv::Archived<Self>,
+    ) -> Result<(), crate::outcome::CommandFailure> {
+        use crate::snapshot::rkyv_util::SlabWrapper;
+        use rkyv::with::DeserializeWith;
+
+        // 1. 清空现有状态
+        self.orders.clear();
+        self.levels.clear();
+        self.bids.clear();
+        self.asks.clear();
+        self.order_map.clear();
+
+        // 2. 恢复 Slab 结构 (利用 SlabWrapper 的 DeserializeWith 实现)
+        self.orders =
+            SlabWrapper::deserialize_with(&archived.orders, &mut rkyv::Infallible).unwrap();
+        self.levels =
+            SlabWrapper::deserialize_with(&archived.levels, &mut rkyv::Infallible).unwrap();
+
+        // 3. 恢复索引映射
+        for (archived_price, &idx) in archived.bids.iter() {
+            let price: Price = archived_price.deserialize(&mut rkyv::Infallible).unwrap();
+            self.bids.insert(price, idx as usize);
+        }
+        for (archived_price, &idx) in archived.asks.iter() {
+            let price: Price = archived_price.deserialize(&mut rkyv::Infallible).unwrap();
+            self.asks.insert(price, idx as usize);
+        }
+
+        for (archived_id, &idx) in archived.order_map.iter() {
+            let id: OrderId = archived_id.deserialize(&mut rkyv::Infallible).unwrap();
+            self.order_map.insert(id, idx as usize);
+        }
+
+        Ok(())
     }
 }
 
@@ -245,7 +295,7 @@ impl OrderBookBackend for SparseBackend {
         true
     }
 
-    #[cfg(feature = "serde")]
+    #[cfg(any(feature = "snapshot", feature = "serde", feature = "rkyv"))]
     fn export_levels(&self) -> Vec<crate::snapshot::PriceLevelModel> {
         let mut model_levels = Vec::with_capacity(self.bids.len() + self.asks.len());
 
@@ -284,8 +334,8 @@ impl OrderBookBackend for SparseBackend {
         model_levels
     }
 
-    #[cfg(feature = "serde")]
-    fn import_levels(&mut self, levels: Vec<crate::snapshot::PriceLevelModel>) {
+    #[cfg(any(feature = "snapshot", feature = "serde", feature = "rkyv"))]
+    fn import_levels(&mut self, _levels: Vec<crate::snapshot::PriceLevelModel>) {
         // 清空现有状态
         self.orders.clear();
         self.levels.clear();
@@ -293,7 +343,7 @@ impl OrderBookBackend for SparseBackend {
         self.asks.clear();
         self.order_map.clear();
 
-        for model_level in levels {
+        for model_level in _levels {
             let level_idx = self.get_or_create_level(model_level.side, model_level.price);
             for order_data in model_level.orders {
                 let order_idx = self
@@ -302,5 +352,18 @@ impl OrderBookBackend for SparseBackend {
                 self.push_to_level_back(level_idx, order_idx);
             }
         }
+    }
+
+    #[cfg(any(feature = "snapshot", feature = "serde", feature = "rkyv"))]
+    fn transfer_to_sparse(&self) -> crate::book::backend::sparse::SparseBackend {
+        self.clone()
+    }
+
+    #[cfg(feature = "rkyv")]
+    fn import_from_archived_sparse(
+        &mut self,
+        archived: &rkyv::Archived<crate::book::backend::sparse::SparseBackend>,
+    ) {
+        self.recovery_from_archived(archived).unwrap();
     }
 }

@@ -2,8 +2,10 @@ use crate::types::{OrderId, Price, Quantity, SequenceNumber, Timestamp, UserId};
 use mt_engine::order_flags::OrderFlags;
 use mt_engine::order_type::OrderType;
 use mt_engine::side::Side;
+use rkyv::{Archive, Deserialize, Serialize};
+
 #[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
 
 /// 订单基础数据
 ///
@@ -12,8 +14,8 @@ use serde::{Deserialize, Serialize};
 /// 2. 可见数量 / 峰值大小 (冰山单逻辑)
 /// 3. 方向 / 标志位 / 类型 (逻辑分支)
 #[repr(C, align(128))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Archive, Serialize, Deserialize)]
+#[cfg_attr(feature = "serde", derive(SerdeSerialize, SerdeDeserialize))]
 pub struct OrderData {
     // ========== 热数据 (Hot Data - First Cache Line) ==========
     /// 剩余数量 (Total Remaining)
@@ -71,8 +73,8 @@ impl OrderData {
 }
 
 /// 订单簿中的挂单 (Resting Order)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Archive, Serialize, Deserialize)]
+#[cfg_attr(feature = "serde", derive(SerdeSerialize, SerdeDeserialize))]
 pub struct RestingOrder<L> {
     pub data: OrderData,
     pub level_idx: L,

@@ -67,6 +67,14 @@ docker run --rm \
     -Dsbe.validation.stop.on.error=true \
     /sbe/schema/mt-engine/templates_FixBinary.xml
 
+# Post-process: Inject rkyv traits into the generated files
+echo "Injecting rkyv traits..."
+# We target both enums and structs that already have Serialize/Deserialize
+# Use -i '' for macOS sed compatibility
+find "$OUTPUT_DIR/src" -name "*.rs" -exec sed -i '' \
+    '/derive(Serialize, Deserialize))/a\
+#[cfg_attr(feature = "rkyv", derive(rkyv::Archive, rkyv::Serialize, rkyv::Deserialize))]' {} +
+
 echo ""
 echo "Generated files:"
 find "$OUTPUT_DIR" -type f \( -name "*.rs" -o -name "Cargo.toml" \) 2>/dev/null || echo "  (none found)"

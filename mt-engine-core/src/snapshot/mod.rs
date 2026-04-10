@@ -1,21 +1,48 @@
 use crate::orders::OrderData;
-use crate::types::{Price, SequenceNumber, Timestamp};
+use crate::types::{OrderId, Price, SequenceNumber, Timestamp};
 use mt_engine::side::Side;
-use serde::{Deserialize, Serialize};
+use rkyv::{Archive, Deserialize, Serialize};
 
-/// 快照中间模型 - 后端无关的订单簿状态表示
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg(feature = "serde")]
+use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
+
+pub mod rkyv_util;
+
+/// 快照模型 - 包含引擎完整状态的 rkyv 版本
+#[derive(Debug, Clone, Archive, Serialize, Deserialize)]
+#[cfg_attr(feature = "serde", derive(SerdeSerialize, SerdeDeserialize))]
 pub struct SnapshotModel {
     pub last_sequence_number: SequenceNumber,
     pub last_timestamp: Timestamp,
     pub trade_id_seq: u64,
     pub ltp: Price,
-    pub levels: Vec<PriceLevelModel>,
-    pub condition_orders: Vec<OrderData>,
+    pub last_order_id: OrderId,
+
+    /// 核心后端状态 (直接归档 Sparse 结构)
+    pub backend: crate::book::backend::sparse::SparseBackend,
+
+    /// 条件单状态 (使用 SlabWrapper)
+    #[with(crate::snapshot::rkyv_util::SlabWrapper)]
+    pub condition_orders: slab::Slab<OrderData>,
 }
 
-/// 价格档位中间模型
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl Default for SnapshotModel {
+    fn default() -> Self {
+        Self {
+            last_sequence_number: SequenceNumber(0),
+            last_timestamp: Timestamp(0),
+            trade_id_seq: 0,
+            ltp: Price(0),
+            last_order_id: OrderId(0),
+            backend: crate::book::backend::sparse::SparseBackend::new(),
+            condition_orders: slab::Slab::new(),
+        }
+    }
+}
+
+/// PriceLevelModel - 档位快照模型
+#[derive(Debug, Clone, Archive, Serialize, Deserialize)]
+#[cfg_attr(feature = "serde", derive(SerdeSerialize, SerdeDeserialize))]
 pub struct PriceLevelModel {
     pub price: Price,
     pub side: Side,
@@ -24,7 +51,8 @@ pub struct PriceLevelModel {
 
 /// 快照配置
 #[cfg(feature = "snapshot")]
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Archive, Serialize, Deserialize)]
+#[cfg_attr(feature = "serde", derive(SerdeSerialize, SerdeDeserialize))]
 pub struct SnapshotConfig {
     /// 指令计数间隔（每 N 条指令触发一次）
     pub count_interval: u64,

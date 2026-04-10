@@ -14,7 +14,6 @@ pub mod command;
 pub mod engine;
 pub mod orders;
 pub mod outcome;
-#[cfg(feature = "serde")]
 pub mod snapshot;
 pub mod types;
 

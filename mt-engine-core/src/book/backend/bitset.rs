@@ -86,6 +86,13 @@ impl L3Bitset {
     }
 
     #[inline(always)]
+    pub fn test(&self, idx: usize) -> bool {
+        let l3_idx = idx / 64;
+        let l3_bit = 1u64 << (idx % 64);
+        (self.l3[l3_idx] & l3_bit) != 0
+    }
+
+    #[inline(always)]
     pub fn clear(&mut self) {
         self.l1.fill(0);
         self.l2.fill(0);
