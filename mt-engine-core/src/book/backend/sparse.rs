@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, VecDeque};
 use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
 
 /// 价格档位内部结构
-#[derive(Debug, Clone, Archive, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Archive, Serialize, Deserialize)]
 #[cfg_attr(feature = "serde", derive(SerdeSerialize, SerdeDeserialize))]
 pub struct PriceLevel<OrderIdx> {
     pub queue: VecDeque<OrderIdx>,

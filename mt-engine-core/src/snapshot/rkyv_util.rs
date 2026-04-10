@@ -32,7 +32,7 @@ impl<T: Archive + Serialize<S> + Clone, S: Fallible + ?Sized + Serializer + Scra
 
 impl<T, D> DeserializeWith<rkyv::vec::ArchivedVec<Option<T::Archived>>, Slab<T>, D> for SlabWrapper
 where
-    T: Archive,
+    T: Archive + Default,
     T::Archived: Deserialize<T, D>,
     D: Fallible + ?Sized,
 {
@@ -41,12 +41,18 @@ where
         deserializer: &mut D,
     ) -> Result<Slab<T>, D::Error> {
         let mut slab = Slab::with_capacity(field.len());
-        for item in field.iter() {
+        for (next_idx, item) in field.iter().enumerate() {
             if let Some(archived) = item.as_ref() {
                 let val: T = archived.deserialize(deserializer)?;
-                slab.insert(val);
+                let idx = slab.insert(val);
+                assert_eq!(idx, next_idx, "Slab index misalignment!");
             } else {
-                // Slab manual hole creation is tricky, but for snapshots we usually have dense IDs.
+                let idx = slab.insert(T::default());
+                slab.remove(idx);
+                assert_eq!(
+                    idx, next_idx,
+                    "Slab index misalignment during hole creation!"
+                );
             }
         }
         Ok(slab)

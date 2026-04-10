@@ -14,7 +14,7 @@ use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
 /// 2. 可见数量 / 峰值大小 (冰山单逻辑)
 /// 3. 方向 / 标志位 / 类型 (逻辑分支)
 #[repr(C, align(128))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Archive, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Archive, Serialize, Deserialize)]
 #[cfg_attr(feature = "serde", derive(SerdeSerialize, SerdeDeserialize))]
 pub struct OrderData {
     // ========== 热数据 (Hot Data - First Cache Line) ==========
@@ -73,7 +73,7 @@ impl OrderData {
 }
 
 /// 订单簿中的挂单 (Resting Order)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Archive, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Archive, Serialize, Deserialize)]
 #[cfg_attr(feature = "serde", derive(SerdeSerialize, SerdeDeserialize))]
 pub struct RestingOrder<L> {
     pub data: OrderData,
