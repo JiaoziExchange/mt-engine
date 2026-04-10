@@ -402,25 +402,48 @@ impl OrderBookBackend for DenseBackend {
         price >= self.config.min && price <= self.config.max
     }
 
-    #[cfg(feature = "serde")]
+    #[cfg(any(feature = "snapshot", feature = "serde", feature = "rkyv"))]
+    fn export_levels(&self) -> Vec<crate::snapshot::PriceLevelModel> {
+        let mut model_levels = Vec::new();
+        for idx in 0..self.depth {
+            if let Some(level) = &self.level_array[idx] {
+                let price = self.idx_to_price(idx);
+                let side = if self.bids_bitset.test(idx) {
+                    Side::buy
+                } else {
+                    Side::sell
+                };
+
+                let mut orders = Vec::with_capacity(level.count as usize);
+                let mut curr = level.head;
+                while curr != 0 {
+                    orders.push(self.order_pool[curr as usize].data);
+                    curr = self.order_links[curr as usize].next;
+                }
+                model_levels.push(crate::snapshot::PriceLevelModel {
+                    price,
+                    side,
+                    orders,
+                });
+            }
+        }
+        model_levels
+    }
+
+    #[cfg(any(feature = "snapshot", feature = "serde", feature = "rkyv"))]
     fn import_levels(&mut self, levels: Vec<crate::snapshot::PriceLevelModel>) {
-        // 清空现有状态 (保持预分配的池子大小)
+        // 清空现有状态
         self.bids_bitset.clear();
         self.asks_bitset.clear();
         self.level_array.fill(None);
-        let mut id_to_index = std::mem::take(&mut self.id_to_index);
-        id_to_index.fill(0);
-        self.id_to_index = id_to_index;
+        self.id_to_index.fill(0);
         self.free_list.clear();
-        for i in (1..self.order_pool.len() as u32).rev() {
+        let capacity = self.order_pool.len() - 1;
+        for i in (1..=capacity as u32).rev() {
             self.free_list.push(i);
         }
 
         for model_level in levels {
-            // 注意：DenseBackend 需要验证价格范围
-            if !self.validate_price(model_level.price) {
-                continue;
-            }
             let level_idx = self.get_or_create_level(model_level.side, model_level.price);
             for order_data in model_level.orders {
                 let order_idx = self
@@ -429,6 +452,89 @@ impl OrderBookBackend for DenseBackend {
                 self.push_to_level_back(level_idx, order_idx);
             }
         }
+    }
+
+    #[cfg(any(feature = "snapshot", feature = "serde", feature = "rkyv"))]
+    fn transfer_to_sparse(&self) -> crate::book::backend::sparse::SparseBackend {
+        let mut sparse = crate::book::backend::sparse::SparseBackend::new();
+        sparse.import_levels(self.export_levels());
+        sparse
+    }
+
+    #[cfg(feature = "rkyv")]
+    fn import_from_archived_sparse(
+        &mut self,
+        archived: &rkyv::Archived<crate::book::backend::sparse::SparseBackend>,
+    ) {
+        self.adapt_from_archived_sparse(archived);
+    }
+}
+
+impl DenseBackend {
+    /// 适配器逻辑：从归档的 SparseBackend 格式恢复到 DenseBackend (影子类型隔离)
+    #[cfg(feature = "rkyv")]
+    fn adapt_from_archived_sparse(
+        &mut self,
+        archived: &crate::book::backend::sparse::ArchivedSparseBackend,
+    ) {
+        // 清空现有状态
+        self.bids_bitset.clear();
+        self.asks_bitset.clear();
+        self.level_array.fill(None);
+        self.id_to_index.fill(0);
+        self.free_list.clear();
+        for i in (1..self.order_pool.len() as u32).rev() {
+            self.free_list.push(i);
+        }
+
+        use crate::orders::{OrderData, RestingOrder};
+        use crate::types::Price;
+        use mt_engine::side::Side;
+        use rkyv::{Archived, Deserialize};
+
+        // 处理买单和卖单 (通过 ArchivedBTreeMap 迭代)
+        // 注意：在当前平台 Archived<usize> 是 u32，Archived<Price> 是 ArchivedPrice
+        let process_map =
+            |this: &mut Self,
+             map: &rkyv::collections::ArchivedBTreeMap<Archived<Price>, Archived<usize>>,
+             side: Side| {
+                for (archived_price, archived_level_idx) in map.iter() {
+                    let price = Price(archived_price.0);
+                    if !this.validate_price(price) {
+                        continue;
+                    }
+
+                    let level_idx = this.get_or_create_level(side, price);
+
+                    // 从 ArchivedSparseBackend 的 levels Slab 中获取档位信息
+                    let sparse_level_idx = u64::from(*archived_level_idx) as usize;
+
+                    if let Some(archived_level_opt) = archived.levels.get(sparse_level_idx) {
+                        if let Some(archived_level) = archived_level_opt.as_ref() {
+                            // 遍历该档位下的订单队列
+                            for archived_sparse_order_idx in archived_level.queue.iter() {
+                                let order_idx = u64::from(*archived_sparse_order_idx) as usize;
+                                if let Some(archived_order_opt) = archived.orders.get(order_idx) {
+                                    if let Some(archived_order) = archived_order_opt.as_ref() {
+                                        let order_data: OrderData = archived_order
+                                            .data
+                                            .deserialize(&mut rkyv::Infallible)
+                                            .unwrap();
+
+                                        let dense_order_idx = this
+                                            .insert_order(RestingOrder::new(order_data, level_idx))
+                                            .unwrap();
+                                        this.push_to_level_back(level_idx, dense_order_idx);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            };
+
+        process_map(self, &archived.bids, Side::buy);
+        process_map(self, &archived.asks, Side::sell);
     }
 }
 

@@ -2,6 +2,10 @@ use crate::book::backend::sparse::SparseBackend;
 use crate::book::backend::OrderBookBackend;
 use crate::orders::{OrderData, RestingOrder};
 use crate::outcome::{CommandFailure, CommandOutcome, CommandReport, OrderStatus};
+#[cfg(feature = "rkyv")]
+use crate::snapshot::rkyv_util::SlabWrapper;
+#[cfg(any(feature = "snapshot", feature = "rkyv", feature = "serde"))]
+use crate::snapshot::SnapshotModel;
 use crate::types::{OrderId, Price, Quantity, SequenceNumber, Timestamp, UserId};
 use mt_engine::message_header_codec;
 use mt_engine::order_amend_codec::decoder::OrderAmendDecoder;
@@ -13,15 +17,19 @@ use mt_engine::side::Side;
 use mt_engine::time_in_force::TimeInForce;
 use mt_engine::trade_codec;
 use mt_engine::WriteBuf;
+#[cfg(feature = "rkyv")]
+use rkyv::with::DeserializeWith;
+#[cfg(feature = "rkyv")]
+use rkyv::{archived_root, ser::Serializer, Deserialize};
 use rustc_hash::FxHashMap;
 #[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
 use slab::Slab;
 use std::collections::BTreeMap;
 
 /// 触发链表节点 (用于侵入式双向链表)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "serde", derive(SerdeSerialize, SerdeDeserialize))]
 pub struct TriggerNode {
     /// 指向 condition_order_store 的索引
     pub order_idx: usize,
@@ -35,8 +43,6 @@ pub const NULL_NODE: u32 = u32::MAX;
 
 #[cfg(feature = "snapshot")]
 use crate::snapshot::SnapshotConfig;
-#[cfg(feature = "serde")]
-use crate::snapshot::SnapshotModel;
 
 /// 撮合引擎 - 单线程、极致性能状态机
 /// 方案 B：全链路零分配 & SBE 直接编码
@@ -872,16 +878,22 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
 
     // ========== 快照 (Snapshot) 核心逻辑 ==========
 
-    #[cfg(feature = "serde")]
+    #[cfg(any(feature = "snapshot", feature = "serde", feature = "rkyv"))]
     pub fn to_snapshot(&self) -> SnapshotModel {
         SnapshotModel {
             last_sequence_number: self.last_sequence_number,
             last_timestamp: self.last_timestamp,
             trade_id_seq: self.trade_id_seq,
             ltp: self.ltp,
-            levels: self.backend.export_levels(),
-            condition_orders: self.condition_order_store.iter().map(|(_, o)| *o).collect(),
+            last_order_id: self.last_order_id,
+            backend: self.backend.transfer_to_sparse(),
+            condition_orders: self.condition_order_store.clone(),
         }
+    }
+
+    #[cfg(feature = "rkyv")]
+    pub fn to_snapshot_rkyv(&self) -> SnapshotModel {
+        self.to_snapshot()
     }
 
     #[cfg(feature = "serde")]
@@ -890,7 +902,7 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
         self.last_timestamp = model.last_timestamp;
         self.trade_id_seq = model.trade_id_seq;
         self.ltp = model.ltp;
-        self.backend.import_levels(model.levels);
+        self.backend.import_levels(model.backend.export_levels());
 
         self.condition_order_store.clear();
         self.stop_buy_triggers.clear();
@@ -898,15 +910,13 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
         self.tp_buy_triggers.clear();
         self.tp_sell_triggers.clear();
 
-        for order in model.condition_orders {
+        for (_, order) in model.condition_orders {
             self.register_condition_order(order);
         }
     }
 
-    /// 触发快照 (Fork-based CoW)
-    /// 硬化处理：采用流式 I/O 极大降低子进程 RSS 峰值，防止 OOM
-    #[cfg(all(feature = "snapshot", not(feature = "dense-node")))]
-    pub fn trigger_snapshot(&mut self) -> Result<(), String> {
+    #[cfg(feature = "rkyv")]
+    pub fn trigger_snapshot_rkyv(&mut self) -> Result<(), String> {
         let ts = self.last_timestamp.0;
         let seq = self.last_sequence_number.0;
 
@@ -915,18 +925,13 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
                 .path_template
                 .replace("{seq}", &seq.to_string())
                 .replace("{ts}", &ts.to_string())
+                .replace(".zst", "") // rkyv + mmap 通常不建议全量压缩
         } else {
-            format!("./snapshot_{}.bin.zst", seq)
+            format!("./snapshot_{}.rkyv", seq)
         };
 
-        let compress = self
-            .snapshot_config
-            .as_ref()
-            .map(|c| c.compress)
-            .unwrap_or(true);
-
         #[cfg(feature = "dev")]
-        println!("[Dev] Snapshot triggered via CoW fork: path={}", path);
+        println!("[Dev] Rkyv Snapshot triggered via CoW fork: path={}", path);
 
         unsafe {
             let pid = libc::fork();
@@ -935,44 +940,40 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
             }
 
             if pid == 0 {
-                // 子进程逻辑：避免在堆上产生巨大的中间状态
                 let result = (|| -> Result<(), String> {
-                    // 确保目录存在
                     let snapshot_path = std::path::Path::new(&path);
                     if let Some(parent) = snapshot_path.parent() {
                         let _ = std::fs::create_dir_all(parent);
                     }
 
-                    let file = std::fs::File::create(&path).map_err(|e| e.to_string())?;
-                    let buf_writer = std::io::BufWriter::with_capacity(1024 * 1024, file);
-
-                    // 利用 Box<dyn Write> 构建流式处理链
-                    let mut writer: Box<dyn std::io::Write> = if compress {
-                        let encoder =
-                            zstd::stream::Encoder::new(buf_writer, 3).map_err(|e| e.to_string())?;
-                        Box::new(encoder.auto_finish())
-                    } else {
-                        Box::new(buf_writer)
+                    // 使用 rkyv 进行归档
+                    let mut serializer = rkyv::ser::serializers::AllocSerializer::<4096>::default();
+                    let model = SnapshotModel {
+                        last_sequence_number: self.last_sequence_number,
+                        last_timestamp: self.last_timestamp,
+                        trade_id_seq: self.trade_id_seq,
+                        ltp: self.ltp,
+                        last_order_id: self.last_order_id,
+                        backend: std::ptr::read(&self.backend as *const B as *const SparseBackend),
+                        condition_orders: self.condition_order_store.clone(),
                     };
 
-                    let model = self.to_snapshot();
+                    Serializer::serialize_value(&mut serializer, &model)
+                        .map_err(|e| e.to_string())?;
+                    let bytes = serializer.into_serializer().into_inner();
 
-                    // 流式序列化：数据直接从结构体流向压缩器与磁盘
-                    bincode::serialize_into(&mut writer, &model).map_err(|e| e.to_string())?;
-                    writer.flush().map_err(|e| e.to_string())?;
-
+                    std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
                     Ok(())
                 })();
 
                 match result {
                     Ok(_) => libc::_exit(0),
                     Err(e) => {
-                        eprintln!("[Snapshot Child] Critical Error: {}", e);
+                        eprintln!("[Snapshot Child] Rkyv Error: {}", e);
                         libc::_exit(1);
                     }
                 }
             } else {
-                // 父进程：立即回归热路径
                 self.snapshotting_pid = pid;
                 self.uncommitted_commands = 0;
                 self.last_snapshot_ts = ts;
@@ -991,34 +992,80 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
             if self.uncommitted_commands >= config.count_interval
                 || (config.time_interval_ms > 0 && time_passed >= config.time_interval_ms)
             {
-                // 1. 只有在准备触发新快照时，才检查上一个子进程是否结束
                 if self.snapshotting_pid != 0 {
                     let mut status = 0;
                     unsafe {
                         let ret = libc::waitpid(self.snapshotting_pid, &mut status, libc::WNOHANG);
                         if ret == self.snapshotting_pid || ret < 0 {
-                            // 子进程结束或出错
-                            #[cfg(feature = "dev")]
-                            println!(
-                                "[Dev] Snapshot child {} reaped (status: {})",
-                                self.snapshotting_pid, status
-                            );
                             self.snapshotting_pid = 0;
                         } else {
-                            // 仍在运行，跳过本次触发，等待下一轮
-                            #[cfg(feature = "dev")]
-                            println!(
-                                "[Dev] Skipping snapshot trigger: child {} still running",
-                                self.snapshotting_pid
-                            );
                             return;
                         }
                     }
                 }
 
-                let _ = self.trigger_snapshot();
+                #[cfg(feature = "rkyv")]
+                let _ = self.trigger_snapshot_rkyv();
+                #[cfg(all(not(feature = "rkyv"), feature = "serde"))]
+                let _ = self.trigger_snapshot(); // 保留对原有逻辑的兼容调用
             }
         }
+    }
+
+    #[cfg(feature = "rkyv")]
+    pub fn load_snapshot_rkyv(&mut self, path: &str) -> Result<(), String> {
+        use ::memmap2::Mmap;
+        use std::fs::File;
+
+        let file = File::open(path).map_err(|e| e.to_string())?;
+        let mmap = unsafe { Mmap::map(&file).map_err(|e| e.to_string())? };
+
+        let archived = unsafe { archived_root::<SnapshotModel>(&mmap) };
+
+        self.last_sequence_number = archived
+            .last_sequence_number
+            .deserialize(&mut rkyv::Infallible)
+            .unwrap();
+        self.last_timestamp = archived
+            .last_timestamp
+            .deserialize(&mut rkyv::Infallible)
+            .unwrap();
+        self.trade_id_seq = archived
+            .trade_id_seq
+            .deserialize(&mut rkyv::Infallible)
+            .unwrap();
+        self.ltp = archived.ltp.deserialize(&mut rkyv::Infallible).unwrap();
+        self.last_order_id = archived
+            .last_order_id
+            .deserialize(&mut rkyv::Infallible)
+            .unwrap();
+
+        self.condition_order_store =
+            SlabWrapper::deserialize_with(&archived.condition_orders, &mut rkyv::Infallible)
+                .unwrap();
+        self.restore_backend_from_archived(&archived.backend)?;
+
+        self.stop_buy_triggers.clear();
+        self.stop_sell_triggers.clear();
+        self.tp_buy_triggers.clear();
+        self.tp_sell_triggers.clear();
+        self.pending_stop_map.clear();
+
+        let orders: Vec<_> = self.condition_order_store.iter().map(|(_, o)| *o).collect();
+        for order in orders {
+            self.register_condition_order(order);
+        }
+
+        Ok(())
+    }
+
+    #[cfg(feature = "rkyv")]
+    fn restore_backend_from_archived(
+        &mut self,
+        archived_backend: &rkyv::Archived<crate::book::backend::sparse::SparseBackend>,
+    ) -> Result<(), String> {
+        self.backend.import_from_archived_sparse(archived_backend);
+        Ok(())
     }
 
     #[cfg(feature = "dev")]

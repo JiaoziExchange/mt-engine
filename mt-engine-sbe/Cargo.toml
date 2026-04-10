@@ -11,6 +11,8 @@ path = "src/lib.rs"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"], optional = true }
+rkyv = { version = "0.7", features = ["validation", "std"], optional = true }
 
 [features]
 serde = ["dep:serde"]
+rkyv = ["dep:rkyv"]

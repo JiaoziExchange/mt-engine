@@ -86,12 +86,23 @@ pub trait OrderBookBackend {
     // ========== 快照 (Snapshot) 支持 ==========
 
     /// 将后端状态转换为中立的快照模型中的档位数据
-    #[cfg(feature = "serde")]
+    #[cfg(any(feature = "snapshot", feature = "serde", feature = "rkyv"))]
     fn export_levels(&self) -> Vec<crate::snapshot::PriceLevelModel> {
         unimplemented!("Snapshot exporting is not supported by this backend")
     }
 
     /// 从中立的快照模型中的档位数据恢复后端状态
-    #[cfg(feature = "serde")]
+    #[cfg(any(feature = "snapshot", feature = "serde", feature = "rkyv"))]
     fn import_levels(&mut self, levels: Vec<crate::snapshot::PriceLevelModel>);
+
+    /// [NEW] 将后端状态转换为中立的 SparseBackend 模型 (用于快照导出)
+    #[cfg(any(feature = "snapshot", feature = "serde", feature = "rkyv"))]
+    fn transfer_to_sparse(&self) -> crate::book::backend::sparse::SparseBackend;
+
+    /// [NEW] 从归档的 SparseBackend 影子模型中恢复状态 (影子类型隔离)
+    #[cfg(feature = "rkyv")]
+    fn import_from_archived_sparse(
+        &mut self,
+        archived: &rkyv::Archived<crate::book::backend::sparse::SparseBackend>,
+    );
 }
