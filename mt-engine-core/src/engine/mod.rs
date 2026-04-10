@@ -947,14 +947,15 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
                     }
 
                     // 使用 rkyv 进行归档
-                    let mut serializer = rkyv::ser::serializers::AllocSerializer::<4096>::default();
+                    let mut serializer =
+                        rkyv::ser::serializers::AllocSerializer::<1048576>::default();
                     let model = SnapshotModel {
                         last_sequence_number: self.last_sequence_number,
                         last_timestamp: self.last_timestamp,
                         trade_id_seq: self.trade_id_seq,
                         ltp: self.ltp,
                         last_order_id: self.last_order_id,
-                        backend: std::ptr::read(&self.backend as *const B as *const SparseBackend),
+                        backend: self.backend.transfer_to_sparse(),
                         condition_orders: self.condition_order_store.clone(),
                     };
 

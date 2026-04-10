@@ -231,8 +231,7 @@ By hiding memory access latency behind CPU execution, MT-Engine achieves its sub
 ## 7. Hardening & Stability
 
 ### 7.1 Snapshot Hardening
-- **Allocator Barrier**: Uses `jemalloc` with `atfork` handlers to ensure safe forking without deadlocks during `bincode` serialization.
-- **Streaming I/O**: Implements `bincode::serialize_into` with `BufWriter` to minimize child process RSS peak, preventing OOM.
+- **Zero-Copy Serialization**: Utilizes `rkyv` with `AllocSerializer` and pre-allocated buffers (e.g., 1MB+) to achieve high-performance memory-mapped snapshots with minimal overhead.
 
 ### 7.2 Transactional Consistency
 - **Rollback Mechanism**: `execute_amend` rollback logic ensures that original orders are restored if matching fails due to `PostOnly` or other constraints.

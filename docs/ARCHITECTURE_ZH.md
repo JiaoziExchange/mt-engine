@@ -841,8 +841,7 @@ flowchart TB
 
 为了支持百万级订单的高效持久化，MT-Engine 对快照机制进行了深度硬化：
 
-1.  **分发器屏障 (Allocator Barrier)**：引入 `jemalloc` 作为全局分配器，并通过其内置的 `atfork` 机制，确保在 `fork` 瞬间堆内存处于安全静默状态，规避子进程在序列化时的死锁隐患。
-2.  **流式序列化 (Streaming I/O)**：采用 `bincode::serialize_into` 配合 1MB 级 `BufWriter`。数据直接从内存结构体流向磁盘，子进程不再分配巨大的中间缓冲区，RSS 峰值极低。
+1.  **零拷贝序列化 (Zero-copy I/O)**：弃用原有的流式序列化，全量采用 `rkyv` 进行内存映射兼容的二进制持久化。结合 1MB 级别预分配的 `AllocSerializer` 避免序列化过程中的高频堆内存重分配，极大地提高了快照落盘速度和恢复效率。
 3.  **零成本导出**：导出逻辑仅在 `snapshot` 特性开启时引入依赖，`dense-node` 模式下完全不承担快照解析开销。
 
 ### 9.2 改单事务原子性 (Transactional Amend)
