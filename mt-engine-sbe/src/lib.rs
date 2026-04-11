@@ -5,6 +5,8 @@
 
 use ::core::convert::TryInto;
 
+pub mod control_message_codec;
+pub mod control_op;
 pub mod message_header_codec;
 pub mod order_amend_codec;
 pub mod order_cancel_codec;

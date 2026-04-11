@@ -55,6 +55,10 @@
             <validValue name="traded">7</validValue>
         </enum>
 
+        <enum name="ControlOp" encodingType="uint8">
+            <validValue name="shutdown">0</validValue>
+        </enum>
+
         <!-- ====== 位集合类型 ====== -->
 
         <set name="OrderFlags" encodingType="uint16" semanticType="Flags">
@@ -143,6 +147,12 @@
         <field name="quantity" id="6" type="Quantity"/>
         <field name="timestamp" id="7" type="Timestamp"/>
         <field name="sequence_number" id="8" type="SequenceNumber"/>
+    </message>
+
+    <message name="ControlMessage" id="500" blockLength="24">
+        <field name="control_op" id="1" type="ControlOp"/>
+        <field name="timestamp" id="2" type="Timestamp"/>
+        <field name="sequence_number" id="3" type="SequenceNumber"/>
     </message>
 
 </messageSchema>

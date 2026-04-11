@@ -71,6 +71,7 @@ pub enum CommandFailure {
     DuplicateOrderId,
     CapacityExceeded,
     InvalidOrderId,
+    SystemHalted,
 }
 
 /// 命令执行结果类型 (零拷贝版本)
