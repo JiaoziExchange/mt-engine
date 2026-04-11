@@ -11,7 +11,9 @@ pub struct SbeEncoderListener<'a> {
 
 impl<'a> SbeEncoderListener<'a> {
     pub fn new(buffer: &'a mut [u8]) -> Self {
-        Self { response_buffer: buffer }
+        Self {
+            response_buffer: buffer,
+        }
     }
 }
 
@@ -64,9 +66,9 @@ impl<'a> OrderEventListener for SbeEncoderListener<'a> {
 mod tests {
     use super::*;
     use crate::types::OrderId;
+    use mt_engine::message_header_codec;
     use mt_engine::side::Side;
     use mt_engine::trade_codec;
-    use mt_engine::message_header_codec;
     use mt_engine::ReadBuf;
 
     #[test]
@@ -74,13 +76,17 @@ mod tests {
         let mut buffer = vec![0u8; 1024];
         let mut offset = 0;
 
-        let mut maker = OrderData::default();
-        maker.order_id = OrderId(100);
-        maker.side = Side::buy;
+        let maker = OrderData {
+            order_id: OrderId(100),
+            side: Side::buy,
+            ..Default::default()
+        };
 
-        let mut taker = OrderData::default();
-        taker.order_id = OrderId(101);
-        taker.side = Side::sell;
+        let taker = OrderData {
+            order_id: OrderId(101),
+            side: Side::sell,
+            ..Default::default()
+        };
 
         {
             let mut listener = SbeEncoderListener::new(&mut buffer);

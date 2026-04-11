@@ -2128,16 +2128,14 @@ fn test_snapshot_complex_state_recovery() {
 
     // 2. 异构恢复到 DenseBackend
     let mut resp_buf2 = [0u8; 8192];
-    let mut engine_dense = Engine::new(
-        DenseBackend::new(
+    let mut engine_dense = Engine::new(DenseBackend::new(
             PriceRange {
                 min: Price(1),
                 max: Price(1000),
                 tick: Price(1),
             },
             1024,
-        ),
-        SbeEncoderListener::new(&mut resp_buf2), SbeEncoderListener::new());
+        ), SbeEncoderListener::new(&mut resp_buf2));
 
     engine_dense.from_snapshot(snapshot);
 
@@ -2146,8 +2144,8 @@ fn test_snapshot_complex_state_recovery() {
     assert_eq!(engine_dense.trade_id_seq, 500);
 
     // 验证条件单池
-    assert_eq!(engine_dense.condition_order_store.len(), 1);
-    assert!(engine_dense.stop_buy_triggers.contains_key(&Price(120)));
+    assert_eq!(engine_dense.cond_manager.condition_order_store.len(), 1);
+    assert!(engine_dense.cond_manager.stop_buy_triggers.contains_key(&Price(120)));
 
     // 4. 继续撮合，验证逻辑连续性
     // 提交一个单子触发价格到 120，激活止损单
@@ -2380,23 +2378,21 @@ fn test_e2e_snapshot_portability() {
     );
 
     // 验证条件单恢复
-    assert_eq!(engine_s.condition_order_store.len(), 2);
-    assert!(engine_s.stop_buy_triggers.contains_key(&Price(120)));
-    assert!(engine_s.stop_sell_triggers.contains_key(&Price(80)));
+    assert_eq!(engine_s.cond_manager.condition_order_store.len(), 2);
+    assert!(engine_s.cond_manager.stop_buy_triggers.contains_key(&Price(120)));
+    assert!(engine_s.cond_manager.stop_sell_triggers.contains_key(&Price(80)));
 
     // 5. Dense-node 恢复测试
     {
         let mut resp_buf_d = [0u8; 8192];
-        let mut engine_d = Engine::new(
-            DenseBackend::new(
+        let mut engine_d = Engine::new(DenseBackend::new(
                 PriceRange {
                     min: Price(1),
                     max: Price(1000),
                     tick: Price(1),
                 },
                 1024,
-            ),
-            SbeEncoderListener::new(&mut resp_buf_d), SbeEncoderListener::new());
+            ), SbeEncoderListener::new(&mut resp_buf_d));
         engine_d.from_snapshot(restored_model);
 
         assert_eq!(engine_d.ltp.0, 110);

@@ -3,6 +3,7 @@ use crate::types::{Price, Quantity, SequenceNumber, Timestamp};
 
 pub trait OrderEventListener {
     /// Called when a trade occurs.
+    #[allow(clippy::too_many_arguments)]
     fn on_trade(
         &mut self,
         maker: &OrderData,
