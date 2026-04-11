@@ -52,7 +52,7 @@ fn test_engine_basic_matching() {
         if let CommandOutcome::Applied(report) = outcome {
             assert_eq!(report.status, OrderStatus::Filled);
 
-            // 使用类型化迭代器安全读取 [SAFE READ]
+            // Use typed iterator for safe reading [SAFE READ]
             let trade = report.trades().next().expect("Should have 1 trade");
             assert_eq!(trade.price(), 150); // Matching at Maker price
             assert_eq!(trade.quantity(), 10);
@@ -2040,11 +2040,11 @@ fn test_engine_snapshot_recovery() {
     let mut resp_buf = [0u8; 4096];
     let mut cmd_buf = [0u8; 1024];
 
-    // 1. 在 SparseBackend 上构建初始状态
+    // 1. Build initial state on SparseBackend
     let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
-    // 提交一些订单
+    // Submit some orders
     engine.execute_submit(&codec.encode_submit(
         0,
         OrderId(1),
@@ -2068,11 +2068,11 @@ fn test_engine_snapshot_recovery() {
         TimeInForce::gtc,
     ));
 
-    // 2. 导出快照模型
+    // 2. Export snapshot model
     let snapshot = engine.to_snapshot();
     assert_eq!(snapshot.last_sequence_number.0, 2);
 
-    // 3. 在一个新的 SparseBackend 引擎上恢复
+    // 3. Restore on a new SparseBackend engine
     let mut resp_buf2 = [0u8; 4096];
     let mut engine_sparse = Engine::new(
         SparseBackend::new(),
@@ -2083,7 +2083,7 @@ fn test_engine_snapshot_recovery() {
     assert_eq!(engine_sparse.backend.best_bid_price().unwrap().0, 100);
     assert_eq!(engine_sparse.backend.best_ask_price().unwrap().0, 110);
 
-    // 4. 在一个 DenseBackend 引擎上恢复 (异构恢复验证)
+    // 4. Restore on a DenseBackend engine (heterogeneous recovery verification)
     let dense_config = PriceRange {
         min: Price(1),
         max: Price(1000),
@@ -2113,8 +2113,8 @@ fn test_snapshot_complex_state_recovery() {
     let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
-    // 1. 准备复杂状态
-    // - 普通单
+    // 1. Prepare complex state
+    // - Normal orders
     engine.execute_submit(&codec.encode_submit(
         0,
         OrderId(1),
@@ -2127,7 +2127,7 @@ fn test_snapshot_complex_state_recovery() {
         TimeInForce::gtc,
     ));
 
-    // - 冰山单
+    // - Iceberg orders
     let mut iceberg_flags = OrderFlags::new(0);
     iceberg_flags.set_iceberg(true);
     engine.execute_submit(&codec.encode_submit_ext(
@@ -2144,7 +2144,7 @@ fn test_snapshot_complex_state_recovery() {
         iceberg_flags,
     ));
 
-    // - 止损单
+    // - Stop orders
     engine.execute_submit(&codec.encode_submit_ext(
         200,
         OrderId(3),
@@ -2159,11 +2159,11 @@ fn test_snapshot_complex_state_recovery() {
         OrderFlags::new(0),
     ));
 
-    engine.trade_id_seq = 500; // 手动设置成交 ID 起点
+    engine.trade_id_seq = 500; // Manually set initial trade ID sequence
 
     let snapshot = engine.to_snapshot();
 
-    // 2. 异构恢复到 DenseBackend
+    // 2. Heterogeneous recovery to DenseBackend
     let mut resp_buf2 = [0u8; 8192];
     let mut engine_dense = Engine::new(
         DenseBackend::new(
@@ -2179,19 +2179,19 @@ fn test_snapshot_complex_state_recovery() {
 
     engine_dense.from_snapshot(snapshot);
 
-    // 3. 验证状态
+    // 3. Verify state
     assert_eq!(engine_dense.last_sequence_number.0, 3);
     assert_eq!(engine_dense.trade_id_seq, 500);
 
-    // 验证条件单池
+    // Verify conditional order pool
     assert_eq!(engine_dense.cond_manager.condition_order_store.len(), 1);
     assert!(engine_dense
         .cond_manager
         .stop_buy_triggers
         .contains_key(&Price(120)));
 
-    // 4. 继续撮合，验证逻辑连续性
-    // 提交一个单子触发价格到 120，激活止损单
+    // 4. Continue matching, verify logic continuity
+    // Submit an order to trigger price 120, activating stop orders
     engine_dense.execute_submit(&codec.encode_submit(
         300,
         OrderId(4),
@@ -2204,7 +2204,7 @@ fn test_snapshot_complex_state_recovery() {
         TimeInForce::gtc,
     ));
 
-    // 现在 LTP 应该是 100。提交一个单子把 LTP 推到 120 (通过和 ID 为 2 的冰山单成交)
+    // LTP should be 100. Submit an order to push LTP to 120 (matching with Iceberg order ID 2)
     engine_dense.execute_submit(&codec.encode_submit(
         400,
         OrderId(5),
@@ -2217,8 +2217,8 @@ fn test_snapshot_complex_state_recovery() {
         TimeInForce::gtc,
     ));
 
-    assert_eq!(engine_dense.ltp.0, 110); // 与 ID 2 成交
-    assert_eq!(engine_dense.trade_id_seq, 502); // 产生了两笔成交
+    assert_eq!(engine_dense.ltp.0, 110); // Matched with ID 2
+    assert_eq!(engine_dense.trade_id_seq, 502); // Generated two trades
 }
 
 #[test]
@@ -2237,7 +2237,7 @@ fn test_snapshot_trigger_threshold_logic() {
         compress: false,
     });
 
-    // 发送 9 个指令，应该不会触发
+    // Sending 9 commands, should not trigger
     for i in 1..=9 {
         engine.execute_submit(&codec.encode_submit(
             0,
@@ -2253,7 +2253,7 @@ fn test_snapshot_trigger_threshold_logic() {
         assert_eq!(engine.uncommitted_commands, i);
     }
 
-    // 第 10 个指令触发
+    // The 10th command triggers
     engine.execute_submit(&codec.encode_submit(
         0,
         OrderId(10),
@@ -2266,7 +2266,7 @@ fn test_snapshot_trigger_threshold_logic() {
         TimeInForce::gtc,
     ));
 
-    // 触发后计数器应该重置 (由 trigger_snapshot 设置)
+    // Counter should reset after trigger (set by trigger_snapshot)
     assert_eq!(engine.uncommitted_commands, 0);
 }
 
@@ -2286,9 +2286,9 @@ fn test_e2e_snapshot_portability() {
     let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
-    // 1. 生成复杂状态
+    // 1. Generate complex state
     engine.trade_id_seq = 1000;
-    engine.ltp = Price(100); // 设置初始价格，防止止损单立即触发
+    engine.ltp = Price(100); // Set initial price to prevent immediate stop order trigger
 
     // - Bids
     for i in 1..=5 {
@@ -2304,7 +2304,7 @@ fn test_e2e_snapshot_portability() {
             TimeInForce::gtc,
         ));
     }
-    // - Asks (含冰山单)
+    // - Asks (including Iceberg orders)
     let mut flags_iceberg = OrderFlags::new(0);
     flags_iceberg.set_iceberg(true);
     engine.execute_submit(&codec.encode_submit_ext(
@@ -2321,7 +2321,7 @@ fn test_e2e_snapshot_portability() {
         flags_iceberg,
     ));
 
-    // - Post-Only 单
+    // - Post-Only orders
     let mut flags_post = OrderFlags::new(0);
     flags_post.set_post_only(true);
     engine.execute_submit(&codec.encode_submit_ext(
@@ -2338,7 +2338,7 @@ fn test_e2e_snapshot_portability() {
         flags_post,
     ));
 
-    // - 止损单 (Stop-Market)
+    // - Stop-Market orders
     engine.execute_submit(&codec.encode_submit_ext(
         300,
         OrderId(8),
@@ -2353,7 +2353,7 @@ fn test_e2e_snapshot_portability() {
         OrderFlags::new(0),
     ));
 
-    // - 止盈单 (Stop-Limit) -> 实际上当前逻辑统一为 stop 处理
+    // - Stop-Limit orders -> currently unified as stop logic
     engine.execute_submit(&codec.encode_submit_ext(
         400,
         OrderId(9),
@@ -2368,8 +2368,8 @@ fn test_e2e_snapshot_portability() {
         OrderFlags::new(0),
     ));
 
-    // - 撮合一次更新 LTP，并消耗一部分冰山单
-    // 买 110 vs 卖 110 (订单 6) -> 成交价 110
+    // - Match once to update LTP and consume part of Iceberg orders
+    // Buy 110 vs Sell 110 (Order 6) -> Trade Price 110
     engine.execute_submit(&codec.encode_submit(
         0,
         OrderId(10),
@@ -2384,7 +2384,7 @@ fn test_e2e_snapshot_portability() {
     assert_eq!(engine.ltp.0, 110);
     assert_eq!(engine.trade_id_seq, 1001);
 
-    // 2. 模拟导出到文件 (真正的 Bincode + Zstd)
+    // 2. Simulate export to file (actual Bincode + Zstd)
     let model = engine.to_snapshot();
     let serialized = bincode::serialize(&model).unwrap();
     let snapshot_file = "/tmp/e2e_test_snapshot.bin.zst";
@@ -2396,7 +2396,7 @@ fn test_e2e_snapshot_portability() {
         encoder.finish().unwrap();
     }
 
-    // 3. 从文件恢复
+    // 3. Restore from file
     let mut restored_data = Vec::new();
     {
         let file = std::fs::File::open(snapshot_file).unwrap();
@@ -2405,7 +2405,7 @@ fn test_e2e_snapshot_portability() {
     }
     let restored_model: SnapshotModel = bincode::deserialize(&restored_data).unwrap();
 
-    // 4. 稀松节点恢复测试
+    // 4. Sparse node recovery test
     let mut resp_buf_s = [0u8; 8192];
     let mut engine_s = Engine::new(
         SparseBackend::new(),
@@ -2423,7 +2423,7 @@ fn test_e2e_snapshot_portability() {
         95
     );
 
-    // 验证条件单恢复
+    // Verify conditional order recovery
     assert_eq!(engine_s.cond_manager.condition_order_store.len(), 2);
     assert!(engine_s
         .cond_manager
@@ -2434,7 +2434,7 @@ fn test_e2e_snapshot_portability() {
         .stop_sell_triggers
         .contains_key(&Price(80)));
 
-    // 5. Dense-node 恢复测试
+    // 5. Dense-node recovery test
     {
         let mut resp_buf_d = [0u8; 8192];
         let mut engine_d = Engine::new(
@@ -2451,10 +2451,10 @@ fn test_e2e_snapshot_portability() {
         engine_d.from_snapshot(restored_model);
 
         assert_eq!(engine_d.ltp.0, 110);
-        // 验证 Post-only 订单在位图中存在
+        // Verify Post-only orders exist in bitset
         assert!(engine_d.backend.get_level(Price(90)).is_some());
 
-        // 6. 深度一致性详尽比对 (L2 Depth Comparison)
+        // 6. L2 Depth exhaustive comparison
         let prices_to_check = vec![
             Price(110),
             Price(99),
@@ -2478,8 +2478,8 @@ fn test_e2e_snapshot_portability() {
             assert_eq!(qty_s, qty_d, "L2 Depth mismatch at price {:?}", p);
         }
 
-        // 7. 连续性撮合一致性验证 (Post-Recovery Match Integrity)
-        // 提交一个足以消耗多个档位的买单，观察两个引擎产生的 Trade ID 和 LTP 是否保持同步
+        // 7. Post-Recovery Match Integrity verification
+        // Submit a buy order large enough to consume multiple levels, observe if Trade ID and LTP stay in sync between engines
         let match_cmd = codec.encode_submit(
             0,
             OrderId(100),
@@ -2514,14 +2514,14 @@ fn test_dense_id_out_of_bounds() {
         max: Price(200),
         tick: Price(1),
     };
-    // 限制 Max Order ID 为 1000
+    // Limit Max Order ID to 1000
     let mut engine = Engine::new(
         DenseBackend::new(config, 1024),
         SbeEncoderListener::new(&mut resp_buf),
     );
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
-    // 1. 提交 ID 为 1025 的订单 (越界)
+    // 1. Submit Order ID 1025 (out of bounds)
     let cmd = codec.encode_submit(
         0,
         OrderId(1025),
@@ -2881,14 +2881,14 @@ fn test_control_shutdown_halt() {
     let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
-    // 1. 发送 Shutdown 指令
+    // 1. Send Shutdown command
     let shutdown = codec.encode_control(0, ControlOp::shutdown, SequenceNumber(1), Timestamp(1000));
     let outcome = engine.execute_control(&shutdown);
 
     assert!(matches!(outcome, CommandOutcome::Applied(_)));
     assert!(engine.halted);
 
-    // 2. 随后发送交易指令，应该被拒绝并返回 SystemHalted
+    // 2. Subsequent trading commands should be rejected with SystemHalted
     let submit = codec.encode_submit(
         100,
         OrderId(1),
@@ -2907,7 +2907,7 @@ fn test_control_shutdown_halt() {
         _ => panic!("Expected SystemHalted after shutdown, got {:?}", outcome2),
     }
 
-    // 同样验证 Amend 和 Cancel
+    // Verify Amend and Cancel as well
     let cancel = codec.encode_cancel(200, OrderId(1), SequenceNumber(3), Timestamp(1200));
     match engine.execute_cancel(&cancel) {
         CommandOutcome::Rejected(CommandFailure::SystemHalted) => {}
@@ -2922,7 +2922,7 @@ fn test_control_expanded_coverage() {
     let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
-    // 1. 验证控制指令的 Sequence Monotonicity
+    // 1. Verify sequence monotonicity for control commands
     {
         let bad_seq =
             codec.encode_control(0, ControlOp::shutdown, SequenceNumber(0), Timestamp(1000));
@@ -2932,7 +2932,7 @@ fn test_control_expanded_coverage() {
         }
     }
 
-    // 2. 正常停机
+    // 2. Normal shutdown
     {
         let shutdown =
             codec.encode_control(0, ControlOp::shutdown, SequenceNumber(1), Timestamp(1000));
@@ -2942,7 +2942,7 @@ fn test_control_expanded_coverage() {
         ));
     }
 
-    // 3. 全业务指令拦截验证
+    // 3. Full business command interception verification
     {
         // OrderSubmit
         let t1 = codec.encode_submit(
@@ -3000,7 +3000,7 @@ fn test_control_expanded_coverage() {
         ));
     }
 
-    // 4. 状态隔离验证：新建引擎不应继承停机状态
+    // 4. State isolation verification: New engine should not inherit halted state
     {
         let mut engine2 = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
         let t1 = codec.encode_submit(
@@ -3014,7 +3014,7 @@ fn test_control_expanded_coverage() {
             Timestamp(1000),
             TimeInForce::gtc,
         );
-        // 不应返回 SystemHalted，而是正常受理（虽然可能因为 resp_buf 重用等原因失败，但逻辑上不应被 halted 拦截）
+        // Should not return SystemHalted; should be accepted normally (even if it fails due to resp_buf reuse or other reasons, logically it should not be blocked by halt flag)
         let res = engine2.execute_submit(&t1);
         if let CommandOutcome::Rejected(CommandFailure::SystemHalted) = res {
             panic!("New engine should not be halted")

@@ -7,46 +7,46 @@ use rkyv::{Archive, Deserialize, Serialize};
 #[cfg(feature = "serde")]
 use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
 
-/// 订单基础数据
+/// Base order data
 ///
-/// 按照撮合引擎热路径访问频率排列字段：
-/// 1. 剩余数量 / 已成交数量 / 价格 (撮合必调)
-/// 2. 可见数量 / 峰值大小 (冰山单逻辑)
-/// 3. 方向 / 标志位 / 类型 (逻辑分支)
+/// Fields ordered by access frequency in the matching engine hot path:
+/// 1. Remaining Qty / Filled Qty / Price (required for matching)
+/// 2. Visible Qty / Peak Size (Iceberg order logic)
+/// 3. Side / Flags / Order Type (logic branches)
 #[repr(C, align(128))]
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Archive, Serialize, Deserialize)]
 #[cfg_attr(feature = "serde", derive(SerdeSerialize, SerdeDeserialize))]
 pub struct OrderData {
-    // ========== 热数据 (Hot Data - First Cache Line) ==========
-    /// 剩余数量 (Total Remaining)
+    // ========== Hot Data (First Cache Line) ==========
+    /// Total remaining quantity
     pub remaining_qty: Quantity,
-    /// 已成交数量 (Total Filled)
+    /// Total filled quantity
     pub filled_qty: Quantity,
-    /// 价格 (Limit Price)
+    /// Limit price
     pub price: Price,
-    /// 触发价格 (Stop/StopLimit)
+    /// Trigger price (Stop/StopLimit)
     pub trigger_price: Price,
-    /// 有效期截止时间戳 (GTD/GTH)
+    /// Expiry timestamp (GTD/GTH)
     pub expiry: Timestamp,
-    /// 冰山单可见数量 (Current Visible Peak)
+    /// Iceberg visible quantity (Current Visible Peak)
     pub visible_qty: Quantity,
-    /// 冰山单峰值大小 (Original Peak Size)
+    /// Iceberg peak size (Original Peak Size)
     pub peak_size: Quantity,
-    /// 订单类型 (Market, Limit, Stop, etc.)
+    /// Order type (Market, Limit, Stop, etc.)
     pub order_type: OrderType,
-    /// 买卖方向
+    /// Buy/Sell side
     pub side: Side,
-    /// 订单状态标志 (Post-Only, Iceberg, etc.)
+    /// Order status flags (Post-Only, Iceberg, etc.)
     pub flags: OrderFlags,
 
-    // ========== 冷数据 (Cold Data - Second Cache Line) ==========
-    /// 订单唯一标识
+    // ========== Cold Data (Second Cache Line) ==========
+    /// Order unique identifier
     pub order_id: OrderId,
-    /// 用户 ID
+    /// User ID
     pub user_id: UserId,
-    /// 序列号
+    /// Sequence number
     pub sequence_number: SequenceNumber,
-    /// 提交时间戳
+    /// Submission timestamp
     pub timestamp: Timestamp,
 }
 
@@ -72,7 +72,7 @@ impl OrderData {
     }
 }
 
-/// 订单簿中的挂单 (Resting Order)
+/// Resting Order in the order book
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Archive, Serialize, Deserialize)]
 #[cfg_attr(feature = "serde", derive(SerdeSerialize, SerdeDeserialize))]
 pub struct RestingOrder<L> {

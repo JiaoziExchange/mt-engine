@@ -8,7 +8,7 @@ use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
 
 pub mod rkyv_util;
 
-/// 快照模型 - 包含引擎完整状态的 rkyv 版本
+/// Snapshot Model - rkyv version containing the full engine state
 #[derive(Debug, Clone, Archive, Serialize, Deserialize)]
 #[cfg_attr(feature = "serde", derive(SerdeSerialize, SerdeDeserialize))]
 pub struct SnapshotModel {
@@ -18,10 +18,10 @@ pub struct SnapshotModel {
     pub ltp: Price,
     pub last_order_id: OrderId,
 
-    /// 核心后端状态 (直接归档 Sparse 结构)
+    /// Core backend state (directly archives the Sparse structure)
     pub backend: crate::book::backend::sparse::SparseBackend,
 
-    /// 条件单状态 (使用 SlabWrapper)
+    /// Conditional order state (using SlabWrapper)
     #[with(crate::snapshot::rkyv_util::SlabWrapper)]
     pub condition_orders: slab::Slab<OrderData>,
 }
@@ -40,7 +40,7 @@ impl Default for SnapshotModel {
     }
 }
 
-/// PriceLevelModel - 档位快照模型
+/// PriceLevelModel - Price level snapshot model
 #[derive(Debug, Clone, Archive, Serialize, Deserialize)]
 #[cfg_attr(feature = "serde", derive(SerdeSerialize, SerdeDeserialize))]
 pub struct PriceLevelModel {
@@ -49,18 +49,18 @@ pub struct PriceLevelModel {
     pub orders: Vec<OrderData>,
 }
 
-/// 快照配置
+/// Snapshot Configuration
 #[cfg(feature = "snapshot")]
 #[derive(Debug, Clone, Archive, Serialize, Deserialize)]
 #[cfg_attr(feature = "serde", derive(SerdeSerialize, SerdeDeserialize))]
 pub struct SnapshotConfig {
-    /// 指令计数间隔（每 N 条指令触发一次）
+    /// Command count interval (triggered every N commands)
     pub count_interval: u64,
-    /// 时间间隔（基于业务时间戳，毫秒）
+    /// Time interval (based on business timestamp, in milliseconds)
     pub time_interval_ms: u64,
-    /// 快照文件存储路径模板
+    /// Snapshot file storage path template
     pub path_template: String,
-    /// 是否开启压缩 (默认开启)
+    /// Whether to enable compression (enabled by default)
     pub compress: bool,
 }
 

@@ -5,7 +5,7 @@ use mt_engine::trade_codec;
 use mt_engine::trade_codec::decoder::TradeDecoder;
 use mt_engine::ReadBuf;
 
-/// 订单状态
+/// Order Status
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OrderStatus {
     New,
@@ -15,7 +15,7 @@ pub enum OrderStatus {
     Rejected,
 }
 
-/// 处理结果汇总 (零拷贝版本)
+/// Command Execution Report (Zero-copy version)
 #[derive(Debug)]
 pub struct CommandReport<'a> {
     pub order_id: OrderId,
@@ -25,7 +25,7 @@ pub struct CommandReport<'a> {
 }
 
 impl<'a> CommandReport<'a> {
-    /// 获取类型化的成交明细迭代器 [SAFE READ]
+    /// Get typed trade details iterator [SAFE READ]
     pub fn trades(&self) -> TradeIterator<'a> {
         TradeIterator {
             payload: self.payload,
@@ -34,7 +34,7 @@ impl<'a> CommandReport<'a> {
     }
 }
 
-/// 类型化成交迭代器
+/// Typed Trade Iterator
 pub struct TradeIterator<'a> {
     payload: &'a [u8],
     offset: usize,
@@ -58,7 +58,7 @@ impl<'a> Iterator for TradeIterator<'a> {
     }
 }
 
-/// 命令失败原因
+/// Command failure reasons
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandFailure {
     SequenceGap,
@@ -74,7 +74,7 @@ pub enum CommandFailure {
     SystemHalted,
 }
 
-/// 命令执行结果类型 (零拷贝版本)
+/// Command execution outcome type (Zero-copy version)
 #[derive(Debug)]
 pub enum CommandOutcome<'a> {
     Applied(CommandReport<'a>),
