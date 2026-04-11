@@ -145,17 +145,17 @@ impl OrderBookBackend for DenseBackend {
     ) -> Result<Self::OrderIdx, crate::outcome::CommandFailure> {
         let order_id = order.data.order_id.0 as usize;
 
-        // 1. 安全边界检查：防止恶意大 ID 导致的 OOM 或越界
+        // 1. Safety boundary check: prevent OOM or out-of-bounds caused by maliciously large IDs
         if order_id >= self.id_to_index.len() {
             return Err(crate::outcome::CommandFailure::InvalidOrderId);
         }
 
-        // 2. 幂等性/重复检查：基于物理索引的 O(1) 校验
+        // 2. Idempotency/Duplicate check: O(1) verification based on physical index
         if self.id_to_index[order_id] != 0 {
             return Err(crate::outcome::CommandFailure::DuplicateOrderId);
         }
 
-        // 3. 订单池水位检查：优雅处理负载饱和
+        // 3. Order pool water level check: gracefully handle load saturation
         let idx = match self.free_list.pop() {
             Some(idx) => idx,
             None => return Err(crate::outcome::CommandFailure::CapacityExceeded),
@@ -180,7 +180,7 @@ impl OrderBookBackend for DenseBackend {
         let order = self.order_pool[order_idx as usize];
         let order_id = order.data.order_id.0 as usize;
 
-        // 清理物理索引映射
+        // Clear physical index mapping
         if order_id < self.id_to_index.len() {
             self.id_to_index[order_id] = 0;
         }
@@ -335,7 +335,7 @@ impl OrderBookBackend for DenseBackend {
         let order = &mut self.order_pool[order_idx as usize];
         let diff = (order.data.remaining_qty.0 as i64) - (new_qty.0 as i64);
         order.data.remaining_qty = new_qty;
-        // 同步修改可见数量，防止出现“幽灵峰值” (visible_qty > remaining_qty)
+        // Sync visible quantity to prevent "Ghost Peaks" (visible_qty > remaining_qty)
         order.data.visible_qty.0 = std::cmp::min(order.data.visible_qty.0, new_qty.0);
 
         let level_idx = order.level_idx;
@@ -353,13 +353,13 @@ impl OrderBookBackend for DenseBackend {
         #[cfg(target_arch = "x86_64")]
         unsafe {
             use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
-            // 预取订单数据
+            // Prefetch order data
             _mm_prefetch(
                 &self.order_pool[order_idx as usize].data as *const _ as *const i8,
                 _MM_HINT_T0,
             );
 
-            // 可选：预取下一条链接
+            // Optional: Prefetch next link
             let link = &self.order_links[order_idx as usize];
             if link.next != 0 {
                 _mm_prefetch(
@@ -376,7 +376,7 @@ impl OrderBookBackend for DenseBackend {
         match side {
             Side::buy => {
                 let limit_idx = self.price_to_idx(price_limit).unwrap_or(0);
-                // 遍历买单：向后（从高到限价）
+                // Iterate bids: backwards (from highest to limit price)
                 for idx in (limit_idx..self.depth).rev() {
                     if let Some(level) = &self.level_array[idx] {
                         total += level.total_qty;
@@ -385,7 +385,7 @@ impl OrderBookBackend for DenseBackend {
             }
             Side::sell => {
                 let limit_idx = self.price_to_idx(price_limit).unwrap_or(self.depth - 1);
-                // 遍历卖单：向前（从低到限价）
+                // Iterate asks: forwards (from lowest to limit price)
                 for idx in 0..=limit_idx {
                     if let Some(level) = &self.level_array[idx] {
                         total += level.total_qty;
@@ -432,7 +432,7 @@ impl OrderBookBackend for DenseBackend {
 
     #[cfg(any(feature = "snapshot", feature = "serde", feature = "rkyv"))]
     fn import_levels(&mut self, levels: Vec<crate::snapshot::PriceLevelModel>) {
-        // 清空现有状态
+        // Clear existing state
         self.bids_bitset.clear();
         self.asks_bitset.clear();
         self.level_array.fill(None);
@@ -471,13 +471,13 @@ impl OrderBookBackend for DenseBackend {
 }
 
 impl DenseBackend {
-    /// 适配器逻辑：从归档的 SparseBackend 格式恢复到 DenseBackend (影子类型隔离)
+    /// Adapter logic: Restore state from archived SparseBackend format to DenseBackend (shadow type isolation)
     #[cfg(feature = "rkyv")]
     fn adapt_from_archived_sparse(
         &mut self,
         archived: &crate::book::backend::sparse::ArchivedSparseBackend,
     ) {
-        // 清空现有状态
+        // Clear existing state
         self.bids_bitset.clear();
         self.asks_bitset.clear();
         self.level_array.fill(None);
@@ -492,8 +492,8 @@ impl DenseBackend {
         use mt_engine::side::Side;
         use rkyv::{Archived, Deserialize};
 
-        // 处理买单和卖单 (通过 ArchivedBTreeMap 迭代)
-        // 注意：在当前平台 Archived<usize> 是 u32，Archived<Price> 是 ArchivedPrice
+        // Process bid and ask orders (iterate via ArchivedBTreeMap)
+        // Note: On the current platform, Archived<usize> is u32, and Archived<Price> is ArchivedPrice
         let process_map =
             |this: &mut Self,
              map: &rkyv::collections::ArchivedBTreeMap<Archived<Price>, Archived<usize>>,
@@ -506,12 +506,12 @@ impl DenseBackend {
 
                     let level_idx = this.get_or_create_level(side, price);
 
-                    // 从 ArchivedSparseBackend 的 levels Slab 中获取档位信息
+                    // Get price level information from the levels Slab of ArchivedSparseBackend
                     let sparse_level_idx = u64::from(*archived_level_idx) as usize;
 
                     if let Some(archived_level_opt) = archived.levels.get(sparse_level_idx) {
                         if let Some(archived_level) = archived_level_opt.as_ref() {
-                            // 遍历该档位下的订单队列
+                            // Iterate through the order queue for this price level
                             for archived_sparse_order_idx in archived_level.queue.iter() {
                                 let order_idx = u64::from(*archived_sparse_order_idx) as usize;
                                 if let Some(archived_order_opt) = archived.orders.get(order_idx) {

@@ -10,16 +10,16 @@ use std::collections::{BTreeMap, VecDeque};
 #[cfg(feature = "serde")]
 use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
 
-/// 价格档位内部结构
+/// Internal price level structure
 #[derive(Default, Debug, Clone, Archive, Serialize, Deserialize)]
 #[cfg_attr(feature = "serde", derive(SerdeSerialize, SerdeDeserialize))]
 pub struct PriceLevel<OrderIdx> {
     pub queue: VecDeque<OrderIdx>,
     pub total_qty: u64,
-    pub price: Price, // 存储价格以支持 O(log N) 移除
+    pub price: Price, // Store price to support O(log N) removal
 }
 
-/// 稀疏下单簿后端 - 基于 BTreeMap 和 Slab 实现
+/// Sparse order book backend - implemented based on BTreeMap and Slab
 #[derive(Debug, Clone, Archive, Serialize, Deserialize)]
 #[cfg_attr(feature = "serde", derive(SerdeSerialize, SerdeDeserialize))]
 pub struct SparseBackend {
@@ -49,7 +49,7 @@ impl SparseBackend {
         }
     }
 
-    /// 从归档的影子类型恢复状态 (影子类型隔离策略)
+    /// Restore state from archived shadow types (shadow type isolation strategy)
     #[cfg(feature = "rkyv")]
     pub fn recovery_from_archived(
         &mut self,
@@ -58,20 +58,20 @@ impl SparseBackend {
         use crate::snapshot::rkyv_util::SlabWrapper;
         use rkyv::with::DeserializeWith;
 
-        // 1. 清空现有状态
+        // 1. Clear existing state
         self.orders.clear();
         self.levels.clear();
         self.bids.clear();
         self.asks.clear();
         self.order_map.clear();
 
-        // 2. 恢复 Slab 结构 (利用 SlabWrapper 的 DeserializeWith 实现)
+        // 2. Restore Slab structures (using SlabWrapper's DeserializeWith implementation)
         self.orders =
             SlabWrapper::deserialize_with(&archived.orders, &mut rkyv::Infallible).unwrap();
         self.levels =
             SlabWrapper::deserialize_with(&archived.levels, &mut rkyv::Infallible).unwrap();
 
-        // 3. 恢复索引映射
+        // 3. Restore index mapping
         for (archived_price, &idx) in archived.bids.iter() {
             let price: Price = archived_price.deserialize(&mut rkyv::Infallible).unwrap();
             self.bids.insert(price, idx as usize);
@@ -148,7 +148,7 @@ impl OrderBookBackend for SparseBackend {
             let idx = self.levels.insert(PriceLevel {
                 queue: VecDeque::new(),
                 total_qty: 0,
-                price, // 存入价格
+                price, // Store the price
             });
             target_map.insert(price, idx);
             idx
@@ -208,7 +208,7 @@ impl OrderBookBackend for SparseBackend {
         if let Some(level) = self.levels.get_mut(level_idx) {
             if let Some(pos) = level.queue.iter().position(|&x| x == order_idx) {
                 level.queue.remove(pos);
-                // 安全获取数量，防止订单已先行从 orders 中移除
+                // Safely get quantity to prevent issues if the order was already removed from orders
                 if let Some(order) = self.orders.get(order_idx) {
                     let order_qty = order.data.remaining_qty.0;
                     level.total_qty = level.total_qty.saturating_sub(order_qty);
@@ -228,7 +228,7 @@ impl OrderBookBackend for SparseBackend {
     #[inline(always)]
     fn remove_empty_level(&mut self, level_idx: Self::LevelIdx) {
         if self.level_order_count(level_idx) == 0 {
-            // 利用已存储的 price 直接从红黑树移除，复杂度 O(log N) [FIXED]
+            // Utilize stored price to remove directly from BTreeMap, O(log N) complexity [FIXED]
             if let Some(level) = self.levels.get(level_idx) {
                 let price = level.price;
                 self.bids.remove(&price);
@@ -269,7 +269,7 @@ impl OrderBookBackend for SparseBackend {
         if let Some(order) = self.orders.get_mut(order_idx) {
             let diff = (order.data.remaining_qty.0 as i64) - (new_qty.0 as i64);
             order.data.remaining_qty = new_qty;
-            // 同步修改可见数量，防止出现“幽灵峰值” (visible_qty > remaining_qty)
+            // Sync visible quantity to prevent "Ghost Peaks" (visible_qty > remaining_qty)
             order.data.visible_qty.0 = std::cmp::min(order.data.visible_qty.0, new_qty.0);
 
             if let Some(level) = self.levels.get_mut(order.level_idx) {
@@ -281,7 +281,7 @@ impl OrderBookBackend for SparseBackend {
     #[inline(always)]
     fn prefetch_entry(&self, order_idx: Self::OrderIdx) {
         if let Some(_order) = self.orders.get(order_idx) {
-            // 使用自定义宏实现 x86_64 硬件预取
+            // Use custom macro for x86_64 hardware prefetch
             #[cfg(target_arch = "x86_64")]
             unsafe {
                 use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
@@ -299,7 +299,7 @@ impl OrderBookBackend for SparseBackend {
     fn export_levels(&self) -> Vec<crate::snapshot::PriceLevelModel> {
         let mut model_levels = Vec::with_capacity(self.bids.len() + self.asks.len());
 
-        // 处理买单
+        // Handle bid orders
         for (&price, &level_idx) in &self.bids {
             if let Some(level) = self.levels.get(level_idx) {
                 let orders = level
@@ -315,7 +315,7 @@ impl OrderBookBackend for SparseBackend {
             }
         }
 
-        // 处理卖单
+        // Handle ask orders
         for (&price, &level_idx) in &self.asks {
             if let Some(level) = self.levels.get(level_idx) {
                 let orders = level
@@ -336,7 +336,7 @@ impl OrderBookBackend for SparseBackend {
 
     #[cfg(any(feature = "snapshot", feature = "serde", feature = "rkyv"))]
     fn import_levels(&mut self, _levels: Vec<crate::snapshot::PriceLevelModel>) {
-        // 清空现有状态
+        // Clear existing state
         self.orders.clear();
         self.levels.clear();
         self.bids.clear();

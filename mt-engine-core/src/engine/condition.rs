@@ -6,40 +6,40 @@ use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
 use slab::Slab;
 use std::collections::BTreeMap;
 
-/// 触发链表节点 (用于侵入式双向链表)
+/// Trigger list node (for intrusive doubly-linked list)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(SerdeSerialize, SerdeDeserialize))]
 pub struct TriggerNode {
-    /// 指向 condition_order_store 的索引
+    /// Index pointing to condition_order_store
     pub order_idx: usize,
-    /// 链表前驱 (u32::MAX 表示空)
+    /// List predecessor (u32::MAX for null)
     pub prev: u32,
-    /// 链表后继 (u32::MAX 表示空)
+    /// List successor (u32::MAX for null)
     pub next: u32,
 }
 
 pub const NULL_NODE: u32 = u32::MAX;
 
 pub struct ConditionOrderManager {
-    /// 条件单暂存区 (SL/TP Orders)
+    /// Conditional order staging area (SL/TP Orders)
     pub(crate) condition_order_store: Slab<OrderData>,
 
-    /// 预分配触发缓冲区 (避免热路径分配，存储 Slab 索引)
+    /// Pre-allocated trigger buffer (avoid hot-path allocations, stores Slab indices)
     pub(crate) trigger_index_buffer: Vec<usize>,
 
-    /// 侵入式链表节点池
+    /// Intrusive linked list node pool
     pub(crate) trigger_node_pool: Slab<TriggerNode>,
 
-    /// 止损触发池 - 买单 (LTP >= TriggerPrice)
+    /// Stop trigger pool - Buy (LTP >= TriggerPrice)
     pub(crate) stop_buy_triggers: BTreeMap<Price, u32>,
-    /// 止损触发池 - 卖单 (LTP <= TriggerPrice)
+    /// Stop trigger pool - Sell (LTP <= TriggerPrice)
     pub(crate) stop_sell_triggers: BTreeMap<Price, u32>,
-    /// 止盈触发池 - 买单 (LTP <= TriggerPrice)
+    /// Take Profit trigger pool - Buy (LTP <= TriggerPrice)
     pub(crate) tp_buy_triggers: BTreeMap<Price, u32>,
-    /// 止盈触发池 - 卖单 (LTP >= TriggerPrice)
+    /// Take Profit trigger pool - Sell (LTP >= TriggerPrice)
     pub(crate) tp_sell_triggers: BTreeMap<Price, u32>,
 
-    /// 待触发条件单 ID 映射 (OrderId -> (OrderStoreIndex, NodeIndex))
+    /// Mapping for pending conditional order IDs (OrderId -> (OrderStoreIndex, NodeIndex))
     pub(crate) pending_stop_map: FxHashMap<OrderId, (usize, u32)>,
 }
 
@@ -81,7 +81,7 @@ impl ConditionOrderManager {
         self.pending_stop_map.clear();
     }
 
-    /// 注册条件单
+    /// Register conditional order
     pub fn register_condition_order(&mut self, order: OrderData, ltp: Price) {
         let order_id = order.order_id;
         let trigger_price = order.trigger_price;
@@ -122,7 +122,7 @@ impl ConditionOrderManager {
         *entry = node_idx;
     }
 
-    /// 卸载条件单
+    /// Unregister conditional order
     pub fn unregister_condition_trigger(&mut self, node_idx: u32, order: &OrderData, ltp: Price) {
         let node = if let Some(n) = self.trigger_node_pool.get(node_idx as usize) {
             *n

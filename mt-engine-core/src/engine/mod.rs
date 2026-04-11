@@ -24,31 +24,33 @@ use mt_engine::order_submit_gtd_codec::decoder::OrderSubmitGtdDecoder;
 use mt_engine::order_type::OrderType;
 use mt_engine::side::Side;
 use mt_engine::time_in_force::TimeInForce;
+#[cfg(all(feature = "rkyv", feature = "snapshot"))]
+use rkyv::ser::Serializer;
 #[cfg(feature = "rkyv")]
 use rkyv::with::DeserializeWith;
 #[cfg(feature = "rkyv")]
-use rkyv::{archived_root, ser::Serializer, Deserialize};
+use rkyv::{archived_root, Deserialize};
 #[cfg(feature = "serde")]
 use serde as _;
 
 #[cfg(feature = "snapshot")]
 use crate::snapshot::SnapshotConfig;
 
-/// 撮合引擎 - 单线程、极致性能状态机
-/// 方案 B：全链路零分配 & SBE 直接编码
+/// Matching Engine - Single-threaded, high-performance state machine
+/// Option B: Zero-allocation pipeline & direct SBE encoding
 pub struct Engine<B: OrderBookBackend = SparseBackend, L: OrderEventListener = ()> {
     pub backend: B,
     pub(crate) last_sequence_number: SequenceNumber,
     pub(crate) last_timestamp: Timestamp,
     pub(crate) trade_id_seq: u64,
 
-    /// 统一事件监听器 (替代直接的 response_buffer)
+    /// Unified event listener (replaces direct response_buffer)
     pub listener: L,
 
-    /// 最新成交价 (Last Trade Price)
+    /// Last Trade Price (LTP)
     pub(crate) ltp: Price,
 
-    /// 条件单管理器 (SL/TP Orders)
+    /// Condition Order Manager (SL/TP Orders)
     pub(crate) cond_manager: ConditionOrderManager,
 
     #[cfg(feature = "snapshot")]
@@ -59,10 +61,10 @@ pub struct Engine<B: OrderBookBackend = SparseBackend, L: OrderEventListener = (
     pub(crate) last_snapshot_ts: u64,
     #[cfg(feature = "snapshot")]
     pub(crate) snapshotting_pid: libc::pid_t,
-    /// 最后分配的订单 ID (用于单调性校验)
+    /// Last assigned Order ID (used for monotonicity check)
     pub(crate) last_order_id: OrderId,
-    /// 引擎停机标志位
-    pub(crate) halted: bool,
+    /// Engine halt flag
+    pub halted: bool,
 }
 
 impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
@@ -108,13 +110,13 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
         self.ltp
     }
 
-    /// 获取特定价格档位的总深度
+    /// Get total depth for a specific price level
     #[inline(always)]
     pub fn get_depth(&self, side: Side, price: Price) -> u64 {
         self.backend.get_total_depth(side, price)
     }
 
-    /// 预检查 FOK 深度是否满足
+    /// Pre-check if FOK (Fill-Or-Kill) liquidity is sufficient
     fn check_fok_fillable(
         &self,
         taker_side: Side,
@@ -130,12 +132,12 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
         depth >= taker_qty.0
     }
 
-    /// 执行订单提交
+    /// Execute order submission
     pub fn execute_submit(&mut self, decoder: &OrderSubmitDecoder) -> CommandOutcome<'_> {
         if self.halted {
             return CommandOutcome::Rejected(CommandFailure::SystemHalted);
         }
-        // 严格遵循：订单 ID 必须是不重复且递增的 (O(1) 极速校验)
+        // Strictly enforced: Order IDs must be unique and monotonically increasing (O(1) fast check)
         let order_id = OrderId(decoder.order_id());
         if order_id <= self.last_order_id {
             return CommandOutcome::Rejected(CommandFailure::DuplicateOrderId);
@@ -181,7 +183,7 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
             peak_size: Quantity(quantity), // Default peak = total
         };
 
-        // 【条件单分支 (Stop/TP)】
+        // [Conditional Order Branch (Stop/TP)]
         if taker_order.is_stop() {
             self.cond_manager
                 .register_condition_order(taker_order, self.ltp);
@@ -199,12 +201,12 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
             return CommandOutcome::Rejected(fail);
         }
 
-        // 【Stop 订单激活逻辑 (LTP 驱动)】
+        // [Stop Order Activation Logic (LTP-driven)]
         if self.ltp != initial_ltp {
             self.process_triggered_orders(ts, seq, &mut offset);
         }
 
-        // 处理剩余部分
+        // Handle remaining quantity
         let final_status = if taker_order.is_fully_filled() {
             OrderStatus::Filled
         } else {
@@ -242,7 +244,7 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
         })
     }
 
-    /// 执行带有效期的订单提交 (GTD/GTH)
+    /// Execute order submission with expiry (GTD/GTH)
     pub fn execute_submit_gtd(&mut self, decoder: &OrderSubmitGtdDecoder) -> CommandOutcome<'_> {
         if self.halted {
             return CommandOutcome::Rejected(CommandFailure::SystemHalted);
@@ -282,7 +284,7 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
 
         let mut offset = 0usize;
 
-        // 【条件单分支 (GTD + SL/TP)】
+        // [Conditional Order Branch (GTD + SL/TP)]
         if taker_order.is_stop() {
             self.cond_manager
                 .register_condition_order(taker_order, self.ltp);
@@ -321,7 +323,7 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
         })
     }
 
-    /// 核心撮合循环逻辑封装 - 直接 SBE 编码
+    /// Core matching loop logic - Direct SBE encoding
     fn match_order(
         &mut self,
         taker_order: &mut OrderData,
@@ -334,7 +336,7 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
                 break;
             }
 
-            // 获取最优对手价
+            // Get best opposite price
             let best_opp_price = match taker_order.side {
                 Side::buy => self.backend.best_ask_price(),
                 Side::sell => self.backend.best_bid_price(),
@@ -345,7 +347,7 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
                 break;
             };
 
-            // 限价单价格检查
+            // Limit order price check
             if taker_order.order_type == OrderType::limit {
                 match taker_order.side {
                     Side::buy if taker_order.price < opp_price => break,
@@ -354,7 +356,7 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
                 }
             }
 
-            // 【延迟检查 - Post-Only】
+            // [Deferred Check - Post-Only]
             if taker_order.flags.get_post_only() {
                 return Err(CommandFailure::PostOnlyViolation);
             }
@@ -363,22 +365,22 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
                 continue;
             };
 
-            // 获取 Maker 索引但不立刻弹出，因为后面可能需要处理冰山单或是失败
+            // Get Maker index without popping immediately, as we might handle Iceberg orders or failure later
             let Some(maker_idx) = self.backend.pop_from_level(level_idx) else {
                 self.backend.remove_empty_level(level_idx);
                 continue;
             };
 
-            // 【性能优化 - 硬件预取】
+            // [Performance Optimization - Hardware Prefetch]
             self.backend.prefetch_entry(maker_idx);
 
             let Some(mut maker_order) = self.backend.remove_order(maker_idx) else {
                 continue;
             };
 
-            // 【延迟检查 - Expiry】
+            // [Deferred Check - Expiry]
             if maker_order.data.is_expired(ts) {
-                // 静默撤单并继续
+                // Silently cancel and continue
                 if self.backend.level_order_count(level_idx) == 0 {
                     self.backend.remove_empty_level(level_idx);
                 }
@@ -390,13 +392,13 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
                 maker_order.data.remaining_qty.0,
             );
 
-            // 【冰山单逻辑】：单次撮合不得超过当前可见峰值
+            // [Iceberg Order Logic]: A single match cannot exceed the current visible peak
             if maker_order.data.is_iceberg() {
                 trade_qty = std::cmp::min(trade_qty, maker_order.data.visible_qty.0);
             }
 
             if trade_qty == 0 {
-                // 如果是冰山单峰值耗尽，触发重新排队并【继续】匹配
+                // If Iceberg peak is exhausted, trigger re-queuing and [CONTINUE] matching
                 if maker_order.data.is_iceberg() && maker_order.data.visible_qty.0 == 0 {
                     let reload_qty = std::cmp::min(
                         maker_order.data.remaining_qty.0,
@@ -405,9 +407,9 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
                     maker_order.data.visible_qty = Quantity(reload_qty);
                     let new_maker_idx = self.backend.insert_order(maker_order)?;
                     self.backend.push_to_level_back(level_idx, new_maker_idx);
-                    continue; // 关键：继续循环匹配下一个 Maker
+                    continue; // Key: Continue to match the next Maker
                 } else {
-                    // 非冰山单理论上不会出现 trade_qty == 0，做防御性插回并退出
+                    // Normally trade_qty == 0 won't happen for non-Iceberg orders; perform defensive re-insertion and exit
                     let new_maker_idx = self.backend.insert_order(maker_order)?;
                     self.backend.push_to_level_front(level_idx, new_maker_idx);
                     break;
@@ -419,7 +421,7 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
             maker_order.data.remaining_qty.0 -= trade_qty;
             maker_order.data.filled_qty.0 += trade_qty;
 
-            // 冰山单可见数量处理
+            // Iceberg visible quantity handling
             if maker_order.data.visible_qty.0 > 0 {
                 maker_order.data.visible_qty.0 =
                     maker_order.data.visible_qty.0.saturating_sub(trade_qty);
@@ -438,13 +440,13 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
                 offset,
             );
 
-            // 更新最新成交价
+            // Update Last Trade Price (LTP)
             self.ltp = opp_price;
 
             if !maker_order.data.is_fully_filled() {
-                // 如果是冰山单且 Peak 消耗完，需要重新排队并【继续】匹配
+                // If it's an Iceberg order and Peak is exhausted, re-queue and [CONTINUE] matching
                 if maker_order.data.visible_qty.0 == 0 && maker_order.data.is_iceberg() {
-                    // 自动从 remaining_qty 中补足下一个 Peak
+                    // Automatically reload the next Peak from remaining_qty
                     let reload_qty = std::cmp::min(
                         maker_order.data.remaining_qty.0,
                         maker_order.data.peak_size.0,
@@ -453,9 +455,9 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
 
                     let new_maker_idx = self.backend.insert_order(maker_order)?;
                     self.backend.push_to_level_back(level_idx, new_maker_idx);
-                    continue; // 关键：继续循环
+                    continue; // Key: Continue matching
                 } else {
-                    // 普通情况（或 Peak 还有剩余），说明是 Taker 耗尽，插回队首并退出
+                    // Normal case (or Peak still has remaining), Taker is exhausted, re-insert to front and exit
                     let new_maker_idx = self.backend.insert_order(maker_order)?;
                     self.backend.push_to_level_front(level_idx, new_maker_idx);
                     break;
@@ -467,7 +469,7 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
         Ok(())
     }
 
-    /// 执行订单取消
+    /// Execute order cancellation
     #[inline]
     pub fn execute_cancel(&mut self, decoder: &OrderCancelDecoder) -> CommandOutcome<'_> {
         if self.halted {
@@ -500,7 +502,7 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
             })
         } else if let Some((s_idx, node_idx)) = self.cond_manager.pending_stop_map.remove(&order_id)
         {
-            // 从条件单池中彻底移除，并同步清理触发索引以防内存泄漏
+            // Remove completely from the conditional order pool and sync-clear the trigger index to prevent memory leaks
             if let Some(order) = self.cond_manager.condition_order_store.try_remove(s_idx) {
                 self.cond_manager
                     .unregister_condition_trigger(node_idx, &order, self.ltp);
@@ -517,7 +519,7 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
         }
     }
 
-    /// 执行订单修改
+    /// Execute order amendment
     #[inline]
     pub fn execute_amend(&mut self, decoder: &OrderAmendDecoder) -> CommandOutcome<'_> {
         if self.halted {
@@ -549,12 +551,12 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
                 })
             } else {
                 let old_level_idx = current_order.level_idx;
-                let old_data = current_order.data; // 备份原数据用于失败回滚
+                let old_data = current_order.data; // Backup original data for failure rollback
                 self.backend.remove_from_level(old_level_idx, order_idx);
                 let mut order = self.backend.remove_order(order_idx).expect("Exists");
                 self.backend.remove_empty_level(old_level_idx);
 
-                let original_ltp = self.ltp; // 记录改单前的 LTP
+                let original_ltp = self.ltp; // Record LTP before amendment
                 order.data.price = new_price;
                 order.data.remaining_qty = new_qty;
 
@@ -564,7 +566,7 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
 
                 let mut offset = 0usize;
                 if let Err(fail) = self.match_order(&mut order.data, ts, seq, &mut offset) {
-                    // [回滚逻辑]：如果匹配过程出错（如 PostOnly 冲突），将原数据重新挂起
+                    // [Rollback Logic]: If matching errors occur (e.g., PostOnly violation), re-insert original data
                     let _ = self.add_resting_order(old_data);
                     return CommandOutcome::Rejected(fail);
                 }
@@ -573,7 +575,7 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
                     OrderStatus::Filled
                 } else {
                     if let Err(fail) = self.add_resting_order(order.data) {
-                        // [回滚逻辑]：如果挂单失败，恢复原单
+                        // [Rollback Logic]: If resting order fails, restore the original order
                         let _ = self.add_resting_order(old_data);
                         return CommandOutcome::Rejected(fail);
                     }
@@ -584,7 +586,7 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
                     }
                 };
 
-                // [触发补全]：如果 LTP 发生变化，触发止损/止盈 logic
+                // [Trigger Check]: If LTP changes, trigger Stop Loss / Take Profit logic
                 if self.ltp != original_ltp {
                     self.process_triggered_orders(ts, seq, &mut offset);
                 }
@@ -604,7 +606,7 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
         }
     }
 
-    /// 执行系统控制指令 (Shutdown 等)
+    /// Execute system control commands (Shutdown, etc.)
     pub fn execute_control(&mut self, decoder: &ControlMessageDecoder) -> CommandOutcome<'_> {
         let seq = SequenceNumber(decoder.sequence_number());
         let ts = Timestamp(decoder.timestamp());
@@ -619,16 +621,16 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
                 #[cfg(feature = "dev")]
                 println!("[Dev] Shutdown control received. Triggering snapshot and halting.");
 
-                // 1. 触发强制快照 (仅在开启快照特性时)
-                #[cfg(feature = "snapshot")]
+                // 1. Trigger mandatory snapshot (only when snapshot feature is enabled)
+                #[cfg(all(feature = "snapshot", feature = "rkyv"))]
                 let _ = self.trigger_snapshot_rkyv();
 
-                // 2. 设置停机标志位
+                // 2. Set engine halt flag
                 self.halted = true;
 
                 CommandOutcome::Applied(CommandReport {
                     order_id: OrderId(0),
-                    status: OrderStatus::Cancelled, // 使用 Cancelled 或自定义状态表示指令已处理
+                    status: OrderStatus::Cancelled, // Use Cancelled or custom status to indicate command processed
                     timestamp: ts,
                     payload: &[],
                 })
@@ -637,38 +639,38 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
         }
     }
 
-    /// 执行条件单触发序列 (SL/TP)
+    /// Execute conditional order trigger sequence (SL/TP)
     fn process_triggered_orders(&mut self, ts: Timestamp, seq: SequenceNumber, offset: &mut usize) {
-        // 由于触发可能导致连环反应，使用循环处理以防栈溢出。
-        // 设置最大激活深度（如 10 级）防止极端情况下的无限递归触发。
+        // Use a loop to handle triggers to prevent stack overflow, as triggers can cause chain reactions.
+        // Set a maximum activation depth (e.g., 10 levels) to prevent infinite recursion in extreme cases.
         let mut depth = 0;
         const MAX_TRIGGER_DEPTH: u32 = 10;
 
         loop {
             if depth >= MAX_TRIGGER_DEPTH {
-                // TODO: 级联触发截断遗留问题。如果触发深度超过 MAX_TRIGGER_DEPTH 而中断，
-                // 剩余应触发的条件单将留在池中直到下一次价格变动。
-                // 建议：加入超限报错拦截，或将遗留单放回独立的延后队列处理。
+                // TODO: Handle cascade trigger truncation. If depth exceeds MAX_TRIGGER_DEPTH and stops,
+                // remaining triggered orders will stay in the pool until the next price change.
+                // Recommendation: Add overflow error blocking or move legacy orders to a separate delayed queue.
                 break;
             }
             depth += 1;
 
             let initial_ltp = self.ltp;
 
-            // 1. 搜集并预取所有触发的条件单索引 (零分配)
+            // 1. Collect and prefetch all triggered order indices (zero-allocation)
             self.cond_manager.collect_triggered_indices(self.ltp);
 
             if self.cond_manager.trigger_index_buffer.is_empty() {
                 break;
             }
 
-            // 2. 依次激活条件单 (此时数据已预取至 L1)
+            // 2. Activate triggered orders sequentially (data now prefetched to L1)
             for i in 0..self.cond_manager.trigger_index_buffer.len() {
                 let s_idx = self.cond_manager.trigger_index_buffer[i];
                 if let Some(mut triggered_order) =
                     self.cond_manager.condition_order_store.try_remove(s_idx)
                 {
-                    // 激活后从映射表中移除
+                    // Remove from the mapping table after activation
                     self.cond_manager
                         .pending_stop_map
                         .remove(&triggered_order.order_id);
@@ -682,7 +684,7 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
                         continue;
                     }
 
-                    // 激活后直接进行 match_order
+                    // Perform match_order directly after activation
                     let _ = self.match_order(&mut triggered_order, ts, seq, offset);
 
                     if !triggered_order.is_fully_filled() {
@@ -694,14 +696,14 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
                 }
             }
 
-            // 3. 多级联动触发
+            // 3. Multi-level cascade trigger
             if self.ltp == initial_ltp {
                 break;
             }
         }
     }
 
-    /// 内部逻辑：将剩余订单加入下单簿
+    /// Internal logic: Add remaining orders to the order book
     fn add_resting_order(&mut self, order_data: OrderData) -> Result<(), CommandFailure> {
         let level_idx = self
             .backend
@@ -713,7 +715,7 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
         Ok(())
     }
 
-    // ========== 快照 (Snapshot) 核心逻辑 ==========
+    // ========== Snapshot Core Logic ==========
 
     #[cfg(any(feature = "snapshot", feature = "serde", feature = "rkyv"))]
     pub fn to_snapshot(&self) -> SnapshotModel {
@@ -748,7 +750,7 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
         }
     }
 
-    #[cfg(feature = "rkyv")]
+    #[cfg(all(feature = "snapshot", feature = "rkyv"))]
     pub fn trigger_snapshot_rkyv(&mut self) -> Result<(), String> {
         let ts = self.last_timestamp.0;
         let seq = self.last_sequence_number.0;
@@ -758,7 +760,7 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
                 .path_template
                 .replace("{seq}", &seq.to_string())
                 .replace("{ts}", &ts.to_string())
-                .replace(".zst", "") // rkyv + mmap 通常不建议全量压缩
+                .replace(".zst", "") // Full compression is generally not recommended for rkyv + mmap
         } else {
             format!("./snapshot_{}.rkyv", seq)
         };
@@ -779,7 +781,7 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
                         let _ = std::fs::create_dir_all(parent);
                     }
 
-                    // 使用 rkyv 进行归档
+                    // Use rkyv for archiving
                     let mut serializer =
                         rkyv::ser::serializers::AllocSerializer::<1048576>::default();
                     let model = SnapshotModel {
@@ -841,7 +843,7 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
                 #[cfg(feature = "rkyv")]
                 let _ = self.trigger_snapshot_rkyv();
                 #[cfg(all(not(feature = "rkyv"), feature = "serde"))]
-                let _ = self.trigger_snapshot(); // 保留对原有逻辑的兼容调用
+                let _ = self.trigger_snapshot(); // Retain compatibility calls for legacy logic
             }
         }
     }

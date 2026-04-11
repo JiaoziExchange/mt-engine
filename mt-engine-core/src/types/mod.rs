@@ -3,7 +3,7 @@ use rkyv::{Archive, Deserialize, Serialize};
 #[cfg(feature = "serde")]
 use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
 
-/// 价格类型，精度由外部决定（统一使用 u64）
+/// Price type, precision decided externally (using u64)
 #[derive(
     Debug,
     Clone,
@@ -30,7 +30,7 @@ use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
 #[repr(transparent)]
 pub struct Price(pub u64);
 
-/// 数量类型，表示订单的委托数量
+/// Quantity type, represents order quantity
 #[derive(
     Debug,
     Clone,
@@ -57,7 +57,7 @@ pub struct Price(pub u64);
 #[repr(transparent)]
 pub struct Quantity(pub u64);
 
-/// 订单唯一标识符
+/// Unique Order ID
 #[derive(
     Debug,
     Clone,
@@ -80,7 +80,7 @@ pub struct Quantity(pub u64);
 #[repr(transparent)]
 pub struct OrderId(pub u64);
 
-/// 序列号，用于确保命令顺序和实现时间优先级
+/// Sequence Number, used for ordering and time priority
 #[derive(
     Debug,
     Clone,
@@ -103,7 +103,7 @@ pub struct OrderId(pub u64);
 #[repr(transparent)]
 pub struct SequenceNumber(pub u64);
 
-/// 用户唯一标识符
+/// Unique User ID
 #[derive(
     Debug,
     Clone,
@@ -126,7 +126,7 @@ pub struct SequenceNumber(pub u64);
 #[repr(transparent)]
 pub struct UserId(pub u64);
 
-/// 时间戳，毫秒精度
+/// Timestamp, millisecond precision
 #[derive(
     Debug,
     Clone,

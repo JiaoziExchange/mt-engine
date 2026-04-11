@@ -7,14 +7,14 @@ use mt_engine::order_type::OrderType;
 use mt_engine::side::Side;
 use mt_engine::time_in_force::TimeInForce;
 
-/// 命令元数据
+/// Command Metadata
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CommandMeta {
     pub sequence_number: SequenceNumber,
     pub timestamp: Timestamp,
 }
 
-/// 订单提交命令 (Submit)
+/// Order Submit Command
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubmitCmd {
     pub order_id: OrderId,
@@ -30,7 +30,7 @@ pub struct SubmitCmd {
     pub visible_qty: Quantity,
 }
 
-/// 订单修改命令 (Amend)
+/// Order Amend Command
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AmendCmd {
     pub order_id: OrderId,
@@ -38,13 +38,13 @@ pub struct AmendCmd {
     pub new_quantity: Quantity,
 }
 
-/// 订单取消命令 (Cancel)
+/// Order Cancel Command
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CancelCmd {
     pub order_id: OrderId,
 }
 
-/// 撮合引擎命令类型
+/// Matching Engine Command Kind
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandKind {
     Submit(SubmitCmd),
@@ -52,7 +52,7 @@ pub enum CommandKind {
     Cancel(CancelCmd),
 }
 
-/// 撮合引擎的标准输入命令
+/// Standard input command for the matching engine
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Command {
     pub meta: CommandMeta,
@@ -60,7 +60,7 @@ pub struct Command {
 }
 
 impl Command {
-    /// 从 SBE OrderSubmit 解码器转换为内部 Command
+    /// Convert from SBE OrderSubmit decoder to internal Command
     pub fn from_submit(decoder: &OrderSubmitDecoder) -> Self {
         Self {
             meta: CommandMeta {
@@ -83,7 +83,7 @@ impl Command {
         }
     }
 
-    /// 从 SBE OrderCancel 解码器转换为内部 Command
+    /// Convert from SBE OrderCancel decoder to internal Command
     pub fn from_cancel(decoder: &OrderCancelDecoder) -> Self {
         Self {
             meta: CommandMeta {
@@ -96,7 +96,7 @@ impl Command {
         }
     }
 
-    /// 从 SBE OrderAmend 解码器转换为内部 Command
+    /// Convert from SBE OrderAmend decoder to internal Command
     pub fn from_amend(decoder: &OrderAmendDecoder) -> Self {
         Self {
             meta: CommandMeta {

@@ -12,7 +12,7 @@ use mt_engine::side::Side;
 use mt_engine::time_in_force::TimeInForce;
 use mt_engine::{ReadBuf, WriteBuf};
 
-/// 交易编解码器 - 提供安全、一致的报文构造 API
+/// Command Codec - provides safe and consistent API for message construction
 pub struct CommandCodec<'a> {
     buffer: &'a mut [u8],
 }
@@ -26,7 +26,7 @@ impl<'a> CommandCodec<'a> {
         self.buffer
     }
 
-    /// 构造限价订单提交报文
+    /// Construct Limit Order Submit message
     #[allow(clippy::too_many_arguments)]
     pub fn encode_submit(
         &mut self,
@@ -55,7 +55,7 @@ impl<'a> CommandCodec<'a> {
         )
     }
 
-    /// 构造带标志位的订单提交报文 (扩展版)
+    /// Construct Order Submit message with flags (Extended version)
     #[allow(clippy::too_many_arguments)]
     pub fn encode_submit_ext(
         &mut self,
@@ -92,7 +92,7 @@ impl<'a> CommandCodec<'a> {
         )
     }
 
-    /// 构造市价单提交报文
+    /// Construct Market Order Submit message
     #[allow(clippy::too_many_arguments)]
     pub fn encode_market(
         &mut self,
@@ -125,7 +125,7 @@ impl<'a> CommandCodec<'a> {
         )
     }
 
-    /// 构造带有效期的订单提交报文 (GTD)
+    /// Construct Order Submit message with expiry (GTD)
     #[allow(clippy::too_many_arguments)]
     pub fn encode_submit_gtd(
         &mut self,
@@ -164,7 +164,7 @@ impl<'a> CommandCodec<'a> {
         )
     }
 
-    /// 构造撤单报文
+    /// Construct Order Cancel message
     pub fn encode_cancel(
         &mut self,
         offset: usize,
@@ -186,7 +186,7 @@ impl<'a> CommandCodec<'a> {
         )
     }
 
-    /// 构造改单报文
+    /// Construct Order Amend message
     pub fn encode_amend(
         &mut self,
         offset: usize,
@@ -212,7 +212,7 @@ impl<'a> CommandCodec<'a> {
         )
     }
 
-    /// 构造控制报文 (Shutdown 等)
+    /// Construct Control message (Shutdown, etc.)
     pub fn encode_control(
         &mut self,
         offset: usize,
