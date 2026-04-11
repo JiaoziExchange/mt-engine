@@ -1,3 +1,6 @@
+pub mod events;
+pub use events::OrderEventListener;
+
 use crate::book::backend::sparse::SparseBackend;
 use crate::book::backend::OrderBookBackend;
 use crate::orders::{OrderData, RestingOrder};
