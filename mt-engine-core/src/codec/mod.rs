@@ -211,4 +211,29 @@ impl<'a> CommandCodec<'a> {
             mt_engine::SBE_SCHEMA_VERSION,
         )
     }
+
+    /// 构造控制报文 (Shutdown 等)
+    pub fn encode_control(
+        &mut self,
+        offset: usize,
+        op: mt_engine::control_op::ControlOp,
+        seq: SequenceNumber,
+        ts: Timestamp,
+    ) -> mt_engine::control_message_codec::decoder::ControlMessageDecoder<'_> {
+        use mt_engine::control_message_codec::{
+            ControlMessageDecoder, ControlMessageEncoder, SBE_BLOCK_LENGTH as CONTROL_LEN,
+        };
+        let mut encoder =
+            ControlMessageEncoder::default().wrap(WriteBuf::new(&mut self.buffer[offset..]), 0);
+        encoder.control_op(op);
+        encoder.timestamp(ts.0);
+        encoder.sequence_number(seq.0);
+
+        ControlMessageDecoder::default().wrap(
+            ReadBuf::new(&self.buffer[offset..]),
+            0,
+            CONTROL_LEN,
+            mt_engine::SBE_SCHEMA_VERSION,
+        )
+    }
 }

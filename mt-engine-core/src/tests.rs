@@ -1,6 +1,7 @@
 use crate::book::backend::sparse::SparseBackend;
 use crate::codec::CommandCodec;
 use crate::prelude::*;
+use mt_engine::control_op::ControlOp;
 use mt_engine::side::Side;
 use mt_engine::time_in_force::TimeInForce;
 
@@ -2870,5 +2871,156 @@ fn test_iceberg_match_limit_by_visible_qty() {
         let mut trades = report.trades();
         assert_eq!(trades.next().unwrap().maker_order_id(), 11); // Maker 2 is ahead
         assert_eq!(trades.next().unwrap().maker_order_id(), 10); // Iceberg is behind
+    }
+}
+
+#[test]
+fn test_control_shutdown_halt() {
+    let mut resp_buf = [0u8; 1024];
+    let mut cmd_buf = [0u8; 1024];
+    let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
+    let mut codec = CommandCodec::new(&mut cmd_buf);
+
+    // 1. 发送 Shutdown 指令
+    let shutdown = codec.encode_control(0, ControlOp::shutdown, SequenceNumber(1), Timestamp(1000));
+    let outcome = engine.execute_control(&shutdown);
+
+    assert!(matches!(outcome, CommandOutcome::Applied(_)));
+    assert!(engine.halted);
+
+    // 2. 随后发送交易指令，应该被拒绝并返回 SystemHalted
+    let submit = codec.encode_submit(
+        100,
+        OrderId(1),
+        UserId(101),
+        Side::buy,
+        Price(100),
+        Quantity(10),
+        SequenceNumber(2),
+        Timestamp(1100),
+        TimeInForce::gtc,
+    );
+    let outcome2 = engine.execute_submit(&submit);
+
+    match outcome2 {
+        CommandOutcome::Rejected(CommandFailure::SystemHalted) => {}
+        _ => panic!("Expected SystemHalted after shutdown, got {:?}", outcome2),
+    }
+
+    // 同样验证 Amend 和 Cancel
+    let cancel = codec.encode_cancel(200, OrderId(1), SequenceNumber(3), Timestamp(1200));
+    match engine.execute_cancel(&cancel) {
+        CommandOutcome::Rejected(CommandFailure::SystemHalted) => {}
+        _ => panic!("Expected SystemHalted for cancel"),
+    }
+}
+
+#[test]
+fn test_control_expanded_coverage() {
+    let mut resp_buf = [0u8; 1024];
+    let mut cmd_buf = [0u8; 1024];
+    let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
+    let mut codec = CommandCodec::new(&mut cmd_buf);
+
+    // 1. 验证控制指令的 Sequence Monotonicity
+    {
+        let bad_seq =
+            codec.encode_control(0, ControlOp::shutdown, SequenceNumber(0), Timestamp(1000));
+        match engine.execute_control(&bad_seq) {
+            CommandOutcome::Rejected(CommandFailure::SequenceGap) => {}
+            _ => panic!("Expected SequenceGap for seq=0"),
+        }
+    }
+
+    // 2. 正常停机
+    {
+        let shutdown =
+            codec.encode_control(0, ControlOp::shutdown, SequenceNumber(1), Timestamp(1000));
+        assert!(matches!(
+            engine.execute_control(&shutdown),
+            CommandOutcome::Applied(_)
+        ));
+    }
+
+    // 3. 全业务指令拦截验证
+    {
+        // OrderSubmit
+        let t1 = codec.encode_submit(
+            100,
+            OrderId(1),
+            UserId(1),
+            Side::buy,
+            Price(100),
+            Quantity(10),
+            SequenceNumber(2),
+            Timestamp(1100),
+            TimeInForce::gtc,
+        );
+        assert!(matches!(
+            engine.execute_submit(&t1),
+            CommandOutcome::Rejected(CommandFailure::SystemHalted)
+        ));
+
+        // OrderSubmitGtd
+        let t2 = codec.encode_submit_gtd(
+            200,
+            OrderId(2),
+            UserId(1),
+            Side::buy,
+            Price(100),
+            Quantity(10),
+            SequenceNumber(3),
+            Timestamp(1200),
+            Timestamp(2000),
+        );
+        assert!(matches!(
+            engine.execute_submit_gtd(&t2),
+            CommandOutcome::Rejected(CommandFailure::SystemHalted)
+        ));
+
+        // OrderCancel
+        let t3 = codec.encode_cancel(300, OrderId(1), SequenceNumber(4), Timestamp(1300));
+        assert!(matches!(
+            engine.execute_cancel(&t3),
+            CommandOutcome::Rejected(CommandFailure::SystemHalted)
+        ));
+
+        // OrderAmend
+        let t4 = codec.encode_amend(
+            400,
+            OrderId(1),
+            Price(101),
+            Quantity(10),
+            SequenceNumber(5),
+            Timestamp(1400),
+        );
+        assert!(matches!(
+            engine.execute_amend(&t4),
+            CommandOutcome::Rejected(CommandFailure::SystemHalted)
+        ));
+    }
+
+    // 4. 状态隔离验证：新建引擎不应继承停机状态
+    {
+        let mut engine2 = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
+        let t1 = codec.encode_submit(
+            500,
+            OrderId(1),
+            UserId(1),
+            Side::buy,
+            Price(100),
+            Quantity(10),
+            SequenceNumber(1),
+            Timestamp(1000),
+            TimeInForce::gtc,
+        );
+        // 不应返回 SystemHalted，而是正常受理（虽然可能因为 resp_buf 重用等原因失败，但逻辑上不应被 halted 拦截）
+        let res = engine2.execute_submit(&t1);
+        match res {
+            CommandOutcome::Rejected(CommandFailure::SystemHalted) => {
+                panic!("New engine should not be halted")
+            }
+            _ => {} // OK
+        }
     }
 }

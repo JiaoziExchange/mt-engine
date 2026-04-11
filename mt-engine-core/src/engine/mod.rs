@@ -15,6 +15,8 @@ use crate::snapshot::rkyv_util::SlabWrapper;
 #[cfg(any(feature = "snapshot", feature = "rkyv", feature = "serde"))]
 use crate::snapshot::SnapshotModel;
 use crate::types::{OrderId, Price, Quantity, SequenceNumber, Timestamp, UserId};
+use mt_engine::control_message_codec::decoder::ControlMessageDecoder;
+use mt_engine::control_op::ControlOp;
 use mt_engine::order_amend_codec::decoder::OrderAmendDecoder;
 use mt_engine::order_cancel_codec::decoder::OrderCancelDecoder;
 use mt_engine::order_submit_codec::decoder::OrderSubmitDecoder;
@@ -59,6 +61,8 @@ pub struct Engine<B: OrderBookBackend = SparseBackend, L: OrderEventListener = (
     pub(crate) snapshotting_pid: libc::pid_t,
     /// 最后分配的订单 ID (用于单调性校验)
     pub(crate) last_order_id: OrderId,
+    /// 引擎停机标志位
+    pub(crate) halted: bool,
 }
 
 impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
@@ -80,6 +84,7 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
             #[cfg(feature = "snapshot")]
             snapshotting_pid: 0,
             last_order_id: OrderId(0),
+            halted: false,
         }
     }
 
@@ -127,6 +132,9 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
 
     /// 执行订单提交
     pub fn execute_submit(&mut self, decoder: &OrderSubmitDecoder) -> CommandOutcome<'_> {
+        if self.halted {
+            return CommandOutcome::Rejected(CommandFailure::SystemHalted);
+        }
         // 严格遵循：订单 ID 必须是不重复且递增的 (O(1) 极速校验)
         let order_id = OrderId(decoder.order_id());
         if order_id <= self.last_order_id {
@@ -236,6 +244,9 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
 
     /// 执行带有效期的订单提交 (GTD/GTH)
     pub fn execute_submit_gtd(&mut self, decoder: &OrderSubmitGtdDecoder) -> CommandOutcome<'_> {
+        if self.halted {
+            return CommandOutcome::Rejected(CommandFailure::SystemHalted);
+        }
         let seq = SequenceNumber(decoder.sequence_number());
         let ts = Timestamp(decoder.timestamp());
         if seq <= self.last_sequence_number {
@@ -459,6 +470,9 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
     /// 执行订单取消
     #[inline]
     pub fn execute_cancel(&mut self, decoder: &OrderCancelDecoder) -> CommandOutcome<'_> {
+        if self.halted {
+            return CommandOutcome::Rejected(CommandFailure::SystemHalted);
+        }
         let seq = SequenceNumber(decoder.sequence_number());
         let ts = Timestamp(decoder.timestamp());
         if seq <= self.last_sequence_number {
@@ -506,6 +520,9 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
     /// 执行订单修改
     #[inline]
     pub fn execute_amend(&mut self, decoder: &OrderAmendDecoder) -> CommandOutcome<'_> {
+        if self.halted {
+            return CommandOutcome::Rejected(CommandFailure::SystemHalted);
+        }
         let seq = SequenceNumber(decoder.sequence_number());
         let ts = Timestamp(decoder.timestamp());
         if seq <= self.last_sequence_number {
@@ -584,6 +601,39 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
             }
         } else {
             CommandOutcome::Rejected(CommandFailure::OrderNotFound)
+        }
+    }
+
+    /// 执行系统控制指令 (Shutdown 等)
+    pub fn execute_control(&mut self, decoder: &ControlMessageDecoder) -> CommandOutcome<'_> {
+        let seq = SequenceNumber(decoder.sequence_number());
+        let ts = Timestamp(decoder.timestamp());
+        if seq <= self.last_sequence_number {
+            return CommandOutcome::Rejected(CommandFailure::SequenceGap);
+        }
+        self.last_sequence_number = seq;
+        self.last_timestamp = ts;
+
+        match decoder.control_op() {
+            ControlOp::shutdown => {
+                #[cfg(feature = "dev")]
+                println!("[Dev] Shutdown control received. Triggering snapshot and halting.");
+
+                // 1. 触发强制快照 (仅在开启快照特性时)
+                #[cfg(feature = "snapshot")]
+                let _ = self.trigger_snapshot_rkyv();
+
+                // 2. 设置停机标志位
+                self.halted = true;
+
+                CommandOutcome::Applied(CommandReport {
+                    order_id: OrderId(0),
+                    status: OrderStatus::Cancelled, // 使用 Cancelled 或自定义状态表示指令已处理
+                    timestamp: ts,
+                    payload: &[],
+                })
+            }
+            _ => CommandOutcome::Rejected(CommandFailure::InvalidOrder),
         }
     }
 
