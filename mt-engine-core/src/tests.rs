@@ -3016,11 +3016,8 @@ fn test_control_expanded_coverage() {
         );
         // 不应返回 SystemHalted，而是正常受理（虽然可能因为 resp_buf 重用等原因失败，但逻辑上不应被 halted 拦截）
         let res = engine2.execute_submit(&t1);
-        match res {
-            CommandOutcome::Rejected(CommandFailure::SystemHalted) => {
-                panic!("New engine should not be halted")
-            }
-            _ => {} // OK
+        if let CommandOutcome::Rejected(CommandFailure::SystemHalted) = res {
+            panic!("New engine should not be halted")
         }
     }
 }
