@@ -393,7 +393,7 @@ dependencies = [
 
 [[package]]
 name = "mt-engine-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bincode",
  "criterion",
@@ -411,7 +411,7 @@ dependencies = [
 
 [[package]]
 name = "mt_engine"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rkyv",
  "serde",
