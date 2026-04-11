@@ -66,6 +66,17 @@ All commands and reports follow the **Simple Binary Encoding (SBE)** standard:
 
 ---
 
+## 📦 Installation
+
+Add this to your `Cargo.toml`:
+
+```toml
+[dependencies]
+mt-engine-core = "0.1.0"
+# If you need to interface with the SBE protocol directly:
+# mt_engine = "0.1.0"
+```
+
 ## 📖 User Guide
 
 ### 1. Constructing & Executing Orders
