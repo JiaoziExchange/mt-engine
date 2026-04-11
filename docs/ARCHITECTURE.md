@@ -36,6 +36,7 @@ MT-Engine is a high-performance, deterministic order matching engine library imp
 | **Phase 2: Core Matching Engine** | ✅ Done | Implemented LTP-triggered stop-loss/take-profit, iceberg requeuing, and E2E strategies. |
 | **Phase 3: Optimization (Sparse)** | ✅ Done | Full-path zero-allocation, SBE unwrap_unchecked, hardware prefetching, cache-line ABI alignment. |
 | **Phase 4: Dense Engine & Scalability** | ✅ Done | Bitset-based tree-less backend, O(1) matching for dense assets. |
+| **Phase 5: Decoupling & Modularization** | ✅ Done | Decoupled SBE encoding via `OrderEventListener`, extracted `ConditionOrderManager`. |
 
 ### 1.4 Design Principles
 
@@ -43,8 +44,9 @@ MT-Engine is a high-performance, deterministic order matching engine library imp
 2. **Explicit over Implicit**: API design emphasizes clarity over brevity.
 3. **Composition over Inheritance**: Use composition to build complex types.
 4. **Errors as Values**: Use `Result` types for error handling instead of exceptions.
-5. **Zero-Cost Abstractions**: Abstractions should not introduce runtime overhead.
+5. **Zero-Cost Abstractions**: Abstractions (Generics/Traits) should not introduce runtime overhead.
 6. **SBE Compatibility**: Exposed structs are designed with fixed sizes to facilitate SBE parser processing.
+7. **Single Responsibility**: Decouple business logic from I/O and serialization protocols.
 
 ---
 
@@ -54,30 +56,19 @@ MT-Engine is a high-performance, deterministic order matching engine library imp
 
 ```
 mt-engine/
-├── Cargo.toml              # Workspace Config
 ├── mt-engine-core/         # Core Engine
-│   └── Cargo.toml
+│   └── src/
+│       ├── engine/
+│       │   ├── mod.rs              # Main Engine State Machine
+│       │   ├── events.rs           # OrderEventListener Trait Definition
+│       │   ├── sbe_listener.rs     # SBE Binary Encoder Implementation
+│       │   └── condition.rs        # ConditionOrderManager (SL/TP logic)
+│       ├── book/                   # Order Book Backends (Sparse/Dense)
+│       ├── outcome/                # Execution results & SBE decoding
+│       └── types/                  # Core domain types (Price, Qty, etc.)
 ├── mt-engine-sbe/          # SBE Encoding/Decoding Layer
-│   ├── src/
-│   │   ├── lib.rs                          # Library entry, exports all codecs
-│   │   ├── message_header_codec.rs         # Message header codec
-│   │   ├── order_submit_codec.rs           # Order submission (64 bytes)
-│   │   ├── order_cancel_codec.rs           # Order cancellation (24 bytes)
-│   │   ├── order_amend_codec.rs            # Order amendment (40 bytes)
-│   │   ├── order_submit_gtd_codec.rs       # GTD Order submission (72 bytes)
-│   │   ├── trade_codec.rs                  # Trade execution (64 bytes)
-│   │   ├── side.rs                         # Side enum
-│   │   ├── order_type.rs                   # Order type enum
-│   │   ├── time_in_force.rs                # Time In Force enum
-│   │   └── order_flags.rs                  # Order flags bitset
-│   └── Cargo.toml
 ├── schemas/                 # SBE XML Schema Definitions
-│   └── mt-engine/
-│       └── templates_FixBinary.xml
 └── docs/                    # Documentation
-    ├── ARCHITECTURE.md
-    ├── SBE_INTEGRATION_GUIDE.md
-    └── TRANSACTION_TYPES.md
 ```
 
 ---
@@ -93,30 +84,46 @@ flowchart TB
     end
 
     subgraph Core["MT-Engine Core"]
-        Engine[Engine]
+        Engine[Engine < B, L >]
+        Cond[ConditionOrderManager]
+    end
+
+    subgraph Listeners["Event Handlers"]
+        Trait[OrderEventListener Trait]
+        Sbe[SbeEncoderListener]
+        Mock[MockListener / ()]
     end
 
     subgraph Book["Order Book Component"]
         Backend[OrderBookBackend Trait]
         Bids[Bids]
         Asks[Asks]
-        Orders[Order Index]
-    end
-
-    subgraph Result["Output"]
-        Outcome[CommandOutcome]
-        Trades[Trade Records]
     end
 
     Cmd -->|execute| Engine
+    Engine <-->|delegates| Cond
+    Engine -->|events| Trait
+    Trait <|-- Sbe
+    Trait <|-- Mock
     Engine <-->|trait bound| Backend
     Backend --> Bids
     Backend --> Asks
-    Backend --> Orders
-    Engine --> |Applied/Rejected| Outcome
 ```
 
-### 3.2 Dual Engine Backend Abstraction
+### 3.2 Decoupled Event Handling (Pattern A)
+
+To maintain sub-100ns latency while improving code quality, MT-Engine uses **Static Dispatch via Generics** to decouple the matching loop from the SBE serialization protocol.
+
+- **`OrderEventListener`**: A trait defining callbacks for trades, order acceptance, and cancellations.
+- **Generic `Engine<B, L>`**: The engine is generic over both the backend `B` and the listener `L`.
+- **Zero Overhead**: The Rust compiler monomorphizes and inlines the listener methods, resulting in zero runtime cost compared to direct buffer writing.
+
+### 3.3 Modularized State Management
+
+- **`ConditionOrderManager`**: Extracted from the `Engine` God Object. It manages Stop-Loss and Take-Profit orders using intrusive double-linked lists and BTreeMaps for O(1) triggering.
+- **Memory Safety**: Uses `Slab` pools for stable memory layout and cache-friendly prefetching.
+
+### 3.4 Dual Engine Backend Abstraction
 
 To cater to different asset liquidity characteristics, MT-Engine implements a dual-backend strategy:
 
@@ -129,30 +136,6 @@ To cater to different asset liquidity characteristics, MT-Engine implements a du
 | **Latency Expectation** | < 30ns | < 100ns (Optimized) |
 | **Best For** | Mainstream assets (BTC/ETH) | Altcoins/NFTs/Long-tail |
 
-### 3.3 SoA vs AoS Optimization
-
-```
-AoS Mode (Traditional):
-┌─────────────────────────────────┐
-│ Order[0]: { qty, side, ts, uid }│  ← Accessing qty also loads ts/uid into cache
-│ Order[1]: { qty, side, ts, uid }│
-│ Order[2]: { qty, side, ts, uid }│
-└─────────────────────────────────┘
-
-SoA Mode (Optimized):
-┌─────────────────────────────────┐
-│ qty_array:  [10, 20, 30, ...]   │  ← Only needed fields are loaded
-│ side_array: [0,  1,  0,  ...]   │  ← Cache line only contains hot data
-├─────────────────────────────────┤
-│ ts_array:   [ts1, ts2, ts3,...] │  ← Cold data loaded on demand
-│ uid_array:  [u1,  u2,  u3,...]  │
-└─────────────────────────────────┘
-
-Cache hit rate comparison (Matching scenarios):
-- AoS: ~60% (loaded unneeded fields)
-- SoA: ~95% (only loaded hot data)
-```
-
 ---
 
 ## 4. Hardware Prefetching & Cache Line Alignment
@@ -160,47 +143,28 @@ Cache hit rate comparison (Matching scenarios):
 ### 4.1 OrderData Cache Alignment
 
 ```rust
-/// Order Data (Extreme alignment: 128 bytes, perfect cache line alignment)
-///
-/// **Layout Design Principles:**
-/// - Hot Data: Frequently accessed fields during matching fall into the first 64-byte cache line.
-/// - Cold Data: User info, Order ID, etc., fall into the second cache line.
 #[repr(C, align(128))]
-#[derive(Clone, Copy)]
 pub struct OrderData {
     // ========== [HOT DATA: Line 0 (64 bytes)] ==========
     pub remaining_qty: Quantity, 
     pub filled_qty: Quantity,    
     pub price: Price,           
     pub side: Side,             
-    pub order_type: OrderType,  
-    pub flags: OrderFlags,      
-    pub visible_qty: Quantity,  
-    pub peak_size: Quantity,    
-    pub expiry: Timestamp,      
-    pub trigger_price: Price,   
+    // ... other hot fields ...
 
     // ========== [COLD DATA: Line 1 (64 bytes)] ==========
     pub order_id: OrderId,      
     pub user_id: UserId,        
-    pub sequence_number: SequenceNumber,
-    pub timestamp: Timestamp,
-    pub _reserved: [u8; 32],    // Reserved for alignment & future use
+    // ... other cold fields ...
 }
 ```
 
 ### 4.2 Hardware Prefetching
 
+MT-Engine uses explicit prefetching to hide memory latency during order book traversal:
 ```rust
-#[cfg(target_arch = "x86_64")]
-unsafe {
-    use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
-    // Prefetch next order into L1 cache while processing the current one
-    _mm_prefetch(&self.order_pool[next_idx].data as *const _ as *const i8, _MM_HINT_T0);
-}
+_mm_prefetch(&self.order_pool[next_idx].data as *const _ as *const i8, _MM_HINT_T0);
 ```
-
-By hiding memory access latency behind CPU execution, MT-Engine achieves its sub-100ns latency target.
 
 ---
 
@@ -213,26 +177,16 @@ By hiding memory access latency behind CPU execution, MT-Engine achieves its sub
 | Cancel Order | **O(1)** (Intrusive) | **O(1)** |
 | Match Execution| O(M log N) | O(M) |
 
-*Where N is the number of active price levels, and M is the number of matched resting orders.*
+*Where N is price levels, M is matched orders.*
 
 ---
 
-## 6. Glossary
+## 6. Hardening & Stability
 
-| Term | Description |
-|------|------|
-| Limit Order | An order specifying a price. |
-| Market Order | An order executing at the best available price. |
-| Post-Only | An order that will not consume liquidity. |
-| Maker | A party providing liquidity. |
-| Taker | A party consuming liquidity. |
----
+### 6.1 Snapshot Hardening
+- **Zero-Copy Serialization**: Utilizes `rkyv` for high-performance memory-mapped snapshots.
+- **CoW Forking**: Uses `libc::fork` to perform non-blocking snapshots via Copy-on-Write.
 
-## 7. Hardening & Stability
-
-### 7.1 Snapshot Hardening
-- **Zero-Copy Serialization**: Utilizes `rkyv` with `AllocSerializer` and pre-allocated buffers (e.g., 1MB+) to achieve high-performance memory-mapped snapshots with minimal overhead.
-
-### 7.2 Transactional Consistency
-- **Rollback Mechanism**: `execute_amend` rollback logic ensures that original orders are restored if matching fails due to `PostOnly` or other constraints.
-- **Trigger Integrity**: Guaranteed cascade triggers for stop-loss/take-profit orders during LTP updates.
+### 6.2 Transactional Consistency
+- **Rollback Mechanism**: `execute_amend` ensures state integrity if matching fails.
+- **Trigger Integrity**: Guaranteed cascade triggers for stop-loss/take-profit orders.
