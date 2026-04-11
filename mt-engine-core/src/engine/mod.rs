@@ -1,3 +1,11 @@
+pub mod condition;
+pub mod events;
+pub mod sbe_listener;
+
+pub use condition::{ConditionOrderManager, TriggerNode, NULL_NODE};
+pub use events::OrderEventListener;
+pub use sbe_listener::SbeEncoderListener;
+
 use crate::book::backend::sparse::SparseBackend;
 use crate::book::backend::OrderBookBackend;
 use crate::orders::{OrderData, RestingOrder};
@@ -7,7 +15,6 @@ use crate::snapshot::rkyv_util::SlabWrapper;
 #[cfg(any(feature = "snapshot", feature = "rkyv", feature = "serde"))]
 use crate::snapshot::SnapshotModel;
 use crate::types::{OrderId, Price, Quantity, SequenceNumber, Timestamp, UserId};
-use mt_engine::message_header_codec;
 use mt_engine::order_amend_codec::decoder::OrderAmendDecoder;
 use mt_engine::order_cancel_codec::decoder::OrderCancelDecoder;
 use mt_engine::order_submit_codec::decoder::OrderSubmitDecoder;
@@ -15,66 +22,32 @@ use mt_engine::order_submit_gtd_codec::decoder::OrderSubmitGtdDecoder;
 use mt_engine::order_type::OrderType;
 use mt_engine::side::Side;
 use mt_engine::time_in_force::TimeInForce;
-use mt_engine::trade_codec;
-use mt_engine::WriteBuf;
 #[cfg(feature = "rkyv")]
 use rkyv::with::DeserializeWith;
 #[cfg(feature = "rkyv")]
 use rkyv::{archived_root, ser::Serializer, Deserialize};
-use rustc_hash::FxHashMap;
 #[cfg(feature = "serde")]
-use serde::{Deserialize as SerdeDeserialize, Serialize as SerdeSerialize};
-use slab::Slab;
-use std::collections::BTreeMap;
-
-/// 触发链表节点 (用于侵入式双向链表)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(SerdeSerialize, SerdeDeserialize))]
-pub struct TriggerNode {
-    /// 指向 condition_order_store 的索引
-    pub order_idx: usize,
-    /// 链表前驱 (u32::MAX 表示空)
-    pub prev: u32,
-    /// 链表后继 (u32::MAX 表示空)
-    pub next: u32,
-}
-
-pub const NULL_NODE: u32 = u32::MAX;
+use serde as _;
 
 #[cfg(feature = "snapshot")]
 use crate::snapshot::SnapshotConfig;
 
 /// 撮合引擎 - 单线程、极致性能状态机
 /// 方案 B：全链路零分配 & SBE 直接编码
-pub struct Engine<'a, B: OrderBookBackend = SparseBackend> {
+pub struct Engine<B: OrderBookBackend = SparseBackend, L: OrderEventListener = ()> {
     pub backend: B,
     pub(crate) last_sequence_number: SequenceNumber,
     pub(crate) last_timestamp: Timestamp,
     pub(crate) trade_id_seq: u64,
 
-    /// 用户提供的响应缓冲区 (Zero-Allocation & External Management)
-    response_buffer: &'a mut [u8],
+    /// 统一事件监听器 (替代直接的 response_buffer)
+    pub listener: L,
 
     /// 最新成交价 (Last Trade Price)
     pub(crate) ltp: Price,
 
-    /// 条件单暂存区 (SL/TP Orders)
-    pub(crate) condition_order_store: Slab<OrderData>,
-
-    /// 预分配触发缓冲区 (避免热路径分配，存储 Slab 索引)
-    trigger_index_buffer: Vec<usize>,
-
-    /// 侵入式链表节点池
-    pub(crate) trigger_node_pool: Slab<TriggerNode>,
-
-    /// 止损触发池 - 买单 (LTP >= TriggerPrice)
-    pub(crate) stop_buy_triggers: BTreeMap<Price, u32>,
-    /// 止损触发池 - 卖单 (LTP <= TriggerPrice)
-    pub(crate) stop_sell_triggers: BTreeMap<Price, u32>,
-    /// 止盈触发池 - 买单 (LTP <= TriggerPrice)
-    pub(crate) tp_buy_triggers: BTreeMap<Price, u32>,
-    /// 止盈触发池 - 卖单 (LTP >= TriggerPrice)
-    pub(crate) tp_sell_triggers: BTreeMap<Price, u32>,
+    /// 条件单管理器 (SL/TP Orders)
+    pub(crate) cond_manager: ConditionOrderManager,
 
     #[cfg(feature = "snapshot")]
     pub snapshot_config: Option<SnapshotConfig>,
@@ -86,26 +59,18 @@ pub struct Engine<'a, B: OrderBookBackend = SparseBackend> {
     pub(crate) snapshotting_pid: libc::pid_t,
     /// 最后分配的订单 ID (用于单调性校验)
     pub(crate) last_order_id: OrderId,
-    /// 待触发条件单 ID 映射 (OrderId -> (OrderStoreIndex, NodeIndex))
-    pub(crate) pending_stop_map: FxHashMap<OrderId, (usize, u32)>,
 }
 
-impl<'a, B: OrderBookBackend> Engine<'a, B> {
-    pub fn new(backend: B, buffer: &'a mut [u8]) -> Self {
+impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
+    pub fn new(backend: B, listener: L) -> Self {
         Self {
             backend,
             last_sequence_number: SequenceNumber(0),
             last_timestamp: Timestamp(0),
             trade_id_seq: 0,
-            response_buffer: buffer,
-            stop_buy_triggers: BTreeMap::new(),
-            stop_sell_triggers: BTreeMap::new(),
-            tp_buy_triggers: BTreeMap::new(),
-            tp_sell_triggers: BTreeMap::new(),
+            listener,
             ltp: Price(0),
-            condition_order_store: Slab::with_capacity(1024),
-            trigger_node_pool: Slab::with_capacity(1024),
-            trigger_index_buffer: Vec::with_capacity(64),
+            cond_manager: ConditionOrderManager::new(),
             #[cfg(feature = "snapshot")]
             snapshot_config: None,
             #[cfg(feature = "snapshot")]
@@ -115,7 +80,6 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
             #[cfg(feature = "snapshot")]
             snapshotting_pid: 0,
             last_order_id: OrderId(0),
-            pending_stop_map: FxHashMap::with_capacity_and_hasher(1024, Default::default()),
         }
     }
 
@@ -211,7 +175,8 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
 
         // 【条件单分支 (Stop/TP)】
         if taker_order.is_stop() {
-            self.register_condition_order(taker_order);
+            self.cond_manager
+                .register_condition_order(taker_order, self.ltp);
             return CommandOutcome::Applied(CommandReport {
                 order_id: taker_order.order_id,
                 status: OrderStatus::New,
@@ -265,7 +230,7 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
             order_id: taker_order.order_id,
             status: final_status,
             timestamp: ts,
-            payload: &self.response_buffer[..offset],
+            payload: self.listener.get_payload(offset),
         })
     }
 
@@ -308,7 +273,8 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
 
         // 【条件单分支 (GTD + SL/TP)】
         if taker_order.is_stop() {
-            self.register_condition_order(taker_order);
+            self.cond_manager
+                .register_condition_order(taker_order, self.ltp);
             return CommandOutcome::Applied(CommandReport {
                 order_id: taker_order.order_id,
                 status: OrderStatus::New,
@@ -340,7 +306,7 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
             order_id: taker_order.order_id,
             status: final_status,
             timestamp: ts,
-            payload: &self.response_buffer[..offset],
+            payload: self.listener.get_payload(offset),
         })
     }
 
@@ -450,34 +416,16 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
 
             self.trade_id_seq += 1;
 
-            // 编码 Trade 报告... (保持原有逻辑)
-            let trade_offset = *offset;
-            let trade_buf = WriteBuf::new(self.response_buffer);
-            let trade_encoder = trade_codec::encoder::TradeEncoder::default().wrap(
-                trade_buf,
-                trade_offset + message_header_codec::ENCODED_LENGTH,
+            self.listener.on_trade(
+                &maker_order.data,
+                taker_order,
+                Quantity(trade_qty),
+                opp_price,
+                ts,
+                seq,
+                self.trade_id_seq,
+                offset,
             );
-            let mut header_encoder = trade_encoder.header(trade_offset);
-
-            header_encoder.block_length(trade_codec::SBE_BLOCK_LENGTH);
-            header_encoder.template_id(trade_codec::SBE_TEMPLATE_ID);
-            header_encoder.schema_id(mt_engine::SBE_SCHEMA_ID);
-            header_encoder.version(mt_engine::SBE_SCHEMA_VERSION);
-
-            // 安全优化：使用 unwrap_unchecked 移除热路径分支判断。
-            // 理由：SBE 结构设计保证此处 header 后面紧跟 body，故 parent() 必为 Some。
-            let mut trade_encoder = unsafe { header_encoder.parent().unwrap_unchecked() };
-            trade_encoder.trade_id(self.trade_id_seq);
-            trade_encoder.maker_order_id(maker_order.data.order_id.0);
-            trade_encoder.taker_order_id(taker_order.order_id.0);
-            trade_encoder.side(taker_order.side);
-            trade_encoder.price(opp_price.0);
-            trade_encoder.quantity(trade_qty);
-            trade_encoder.timestamp(ts.0);
-            trade_encoder.sequence_number(seq.0);
-
-            *offset +=
-                message_header_codec::ENCODED_LENGTH + trade_codec::SBE_BLOCK_LENGTH as usize;
 
             // 更新最新成交价
             self.ltp = opp_price;
@@ -536,10 +484,12 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
                 timestamp: ts,
                 payload: &[],
             })
-        } else if let Some((s_idx, node_idx)) = self.pending_stop_map.remove(&order_id) {
+        } else if let Some((s_idx, node_idx)) = self.cond_manager.pending_stop_map.remove(&order_id)
+        {
             // 从条件单池中彻底移除，并同步清理触发索引以防内存泄漏
-            if let Some(order) = self.condition_order_store.try_remove(s_idx) {
-                self.unregister_condition_trigger(node_idx, &order);
+            if let Some(order) = self.cond_manager.condition_order_store.try_remove(s_idx) {
+                self.cond_manager
+                    .unregister_condition_trigger(node_idx, &order, self.ltp);
             }
 
             CommandOutcome::Applied(CommandReport {
@@ -629,7 +579,7 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
                     order_id,
                     status: final_status,
                     timestamp: ts,
-                    payload: &self.response_buffer[..offset],
+                    payload: self.listener.get_payload(offset),
                 })
             }
         } else {
@@ -654,60 +604,24 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
             depth += 1;
 
             let initial_ltp = self.ltp;
-            self.trigger_index_buffer.clear();
 
             // 1. 搜集并预取所有触发的条件单索引 (零分配)
+            self.cond_manager.collect_triggered_indices(self.ltp);
 
-            // Buy Stop (LTP >= Trigger): 从最小值开始触发
-            while let Some(&first_price) = self.stop_buy_triggers.keys().next() {
-                if first_price > self.ltp {
-                    break;
-                }
-                if let Some(head_node_idx) = self.stop_buy_triggers.remove(&first_price) {
-                    self.collect_and_recycle_trigger_list(head_node_idx);
-                }
-            }
-
-            // Buy TP (LTP <= Trigger): 从最大值开始触发
-            while let Some(&last_price) = self.tp_buy_triggers.keys().next_back() {
-                if last_price < self.ltp {
-                    break;
-                }
-                if let Some(head_node_idx) = self.tp_buy_triggers.remove(&last_price) {
-                    self.collect_and_recycle_trigger_list(head_node_idx);
-                }
-            }
-
-            // Sell Stop (LTP <= Trigger): 从最大值开始触发
-            while let Some(&last_price) = self.stop_sell_triggers.keys().next_back() {
-                if last_price < self.ltp {
-                    break;
-                }
-                if let Some(head_node_idx) = self.stop_sell_triggers.remove(&last_price) {
-                    self.collect_and_recycle_trigger_list(head_node_idx);
-                }
-            }
-
-            // Sell TP (LTP >= Trigger): 从最小值开始触发
-            while let Some(&first_price) = self.tp_sell_triggers.keys().next() {
-                if first_price > self.ltp {
-                    break;
-                }
-                if let Some(head_node_idx) = self.tp_sell_triggers.remove(&first_price) {
-                    self.collect_and_recycle_trigger_list(head_node_idx);
-                }
-            }
-
-            if self.trigger_index_buffer.is_empty() {
+            if self.cond_manager.trigger_index_buffer.is_empty() {
                 break;
             }
 
             // 2. 依次激活条件单 (此时数据已预取至 L1)
-            for i in 0..self.trigger_index_buffer.len() {
-                let s_idx = self.trigger_index_buffer[i];
-                if let Some(mut triggered_order) = self.condition_order_store.try_remove(s_idx) {
+            for i in 0..self.cond_manager.trigger_index_buffer.len() {
+                let s_idx = self.cond_manager.trigger_index_buffer[i];
+                if let Some(mut triggered_order) =
+                    self.cond_manager.condition_order_store.try_remove(s_idx)
+                {
                     // 激活后从映射表中移除
-                    self.pending_stop_map.remove(&triggered_order.order_id);
+                    self.cond_manager
+                        .pending_stop_map
+                        .remove(&triggered_order.order_id);
 
                     if triggered_order.is_expired(ts) {
                         #[cfg(feature = "dev")]
@@ -737,133 +651,6 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
         }
     }
 
-    /// 辅助逻辑：遍历链表，收集索引并回收节点
-    fn collect_and_recycle_trigger_list(&mut self, head_node_idx: u32) {
-        let mut cur = head_node_idx;
-        while cur != NULL_NODE {
-            let node = if let Some(n) = self.trigger_node_pool.get(cur as usize) {
-                *n
-            } else {
-                break;
-            };
-
-            self.prefetch_condition_order(node.order_idx);
-            self.trigger_index_buffer.push(node.order_idx);
-
-            let next = node.next;
-            // 物理回收触发节点到 Slab 池
-            self.trigger_node_pool.remove(cur as usize);
-            cur = next;
-        }
-    }
-
-    #[inline(always)]
-    fn prefetch_condition_order(&self, idx: usize) {
-        if let Some(_entry) = self.condition_order_store.get(idx) {
-            // 安全优化：使用 x86_64 硬件预取指令将数据载入 L1 Cache。
-            #[cfg(target_arch = "x86_64")]
-            unsafe {
-                use std::arch::x86_64::{_mm_prefetch, _MM_HINT_T0};
-                _mm_prefetch(_entry as *const _ as *const i8, _MM_HINT_T0);
-            }
-            #[cfg(target_arch = "aarch64")]
-            unsafe {
-                // aarch64 预取指令：pldl1keep (Read, L1, Keep)
-                core::arch::asm!("prfm pldl1keep, [{0}]", in(reg) _entry);
-            }
-        }
-    }
-
-    /// 内部逻辑：注册条件单到触发池
-    fn register_condition_order(&mut self, order: OrderData) {
-        let order_id = order.order_id;
-        let trigger_price = order.trigger_price;
-        let side = order.side;
-
-        let idx = self.condition_order_store.insert(order);
-        let node_idx = self.trigger_node_pool.insert(TriggerNode {
-            order_idx: idx,
-            prev: NULL_NODE,
-            next: NULL_NODE,
-        }) as u32;
-
-        self.pending_stop_map.insert(order_id, (idx, node_idx));
-
-        let triggers = match side {
-            Side::buy => {
-                if trigger_price >= self.ltp {
-                    &mut self.stop_buy_triggers
-                } else {
-                    &mut self.tp_buy_triggers
-                }
-            }
-            Side::sell => {
-                if trigger_price <= self.ltp {
-                    &mut self.stop_sell_triggers
-                } else {
-                    &mut self.tp_sell_triggers
-                }
-            }
-            _ => return,
-        };
-
-        let entry = triggers.entry(trigger_price).or_insert(NULL_NODE);
-        if *entry != NULL_NODE {
-            // 将新节点插在链表头部
-            self.trigger_node_pool[node_idx as usize].next = *entry;
-            self.trigger_node_pool[*entry as usize].prev = node_idx;
-        }
-        *entry = node_idx;
-    }
-
-    /// 内部逻辑：从触发池中卸载条件单 (O(1) 复杂度)
-    fn unregister_condition_trigger(&mut self, node_idx: u32, order: &OrderData) {
-        let node = if let Some(n) = self.trigger_node_pool.get(node_idx as usize) {
-            *n
-        } else {
-            return;
-        };
-
-        let prev = node.prev;
-        let next = node.next;
-
-        if prev != NULL_NODE {
-            self.trigger_node_pool[prev as usize].next = next;
-        } else {
-            // 如果是头节点，需要更新 BTreeMap 中的头指针
-            let triggers = match order.side {
-                Side::buy => {
-                    if order.trigger_price >= self.ltp {
-                        &mut self.stop_buy_triggers
-                    } else {
-                        &mut self.tp_buy_triggers
-                    }
-                }
-                Side::sell => {
-                    if order.trigger_price <= self.ltp {
-                        &mut self.stop_sell_triggers
-                    } else {
-                        &mut self.tp_sell_triggers
-                    }
-                }
-                _ => return,
-            };
-
-            if next == NULL_NODE {
-                triggers.remove(&order.trigger_price);
-            } else {
-                triggers.insert(order.trigger_price, next);
-            }
-        }
-
-        if next != NULL_NODE {
-            self.trigger_node_pool[next as usize].prev = prev;
-        }
-
-        // 回收节点到 Slab 池
-        self.trigger_node_pool.remove(node_idx as usize);
-    }
-
     /// 内部逻辑：将剩余订单加入下单簿
     fn add_resting_order(&mut self, order_data: OrderData) -> Result<(), CommandFailure> {
         let level_idx = self
@@ -887,7 +674,7 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
             ltp: self.ltp,
             last_order_id: self.last_order_id,
             backend: self.backend.transfer_to_sparse(),
-            condition_orders: self.condition_order_store.clone(),
+            condition_orders: self.cond_manager.condition_order_store.clone(),
         }
     }
 
@@ -904,14 +691,10 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
         self.ltp = model.ltp;
         self.backend.import_levels(model.backend.export_levels());
 
-        self.condition_order_store.clear();
-        self.stop_buy_triggers.clear();
-        self.stop_sell_triggers.clear();
-        self.tp_buy_triggers.clear();
-        self.tp_sell_triggers.clear();
+        self.cond_manager.clear();
 
         for (_, order) in model.condition_orders {
-            self.register_condition_order(order);
+            self.cond_manager.register_condition_order(order, self.ltp);
         }
     }
 
@@ -956,7 +739,7 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
                         ltp: self.ltp,
                         last_order_id: self.last_order_id,
                         backend: self.backend.transfer_to_sparse(),
-                        condition_orders: self.condition_order_store.clone(),
+                        condition_orders: self.cond_manager.condition_order_store.clone(),
                     };
 
                     Serializer::serialize_value(&mut serializer, &model)
@@ -1041,20 +824,21 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
             .deserialize(&mut rkyv::Infallible)
             .unwrap();
 
-        self.condition_order_store =
+        self.cond_manager.condition_order_store =
             SlabWrapper::deserialize_with(&archived.condition_orders, &mut rkyv::Infallible)
                 .unwrap();
         self.restore_backend_from_archived(&archived.backend)?;
 
-        self.stop_buy_triggers.clear();
-        self.stop_sell_triggers.clear();
-        self.tp_buy_triggers.clear();
-        self.tp_sell_triggers.clear();
-        self.pending_stop_map.clear();
+        self.cond_manager.clear(); // Actually we just imported data, let's re-register to rebuild indices
 
-        let orders: Vec<_> = self.condition_order_store.iter().map(|(_, o)| *o).collect();
+        let orders: Vec<_> = self
+            .cond_manager
+            .condition_order_store
+            .iter()
+            .map(|(_, o)| *o)
+            .collect();
         for order in orders {
-            self.register_condition_order(order);
+            self.cond_manager.register_condition_order(order, self.ltp);
         }
 
         Ok(())
@@ -1075,7 +859,7 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
         println!("Last Seq:    {}", self.last_sequence_number.0);
         println!("Last TS:     {}", self.last_timestamp.0);
         println!("LTP:         {}", self.ltp.0);
-        println!("Cond Orders: {}", self.condition_order_store.len());
+        println!("Cond Orders: {}", self.cond_manager.len());
         println!("Trade ID:    {}", self.trade_id_seq);
         #[cfg(feature = "serde")]
         println!("Has Config:  {}", self.snapshot_config.is_some());

@@ -20,6 +20,8 @@ pub mod types;
 pub mod prelude {
     pub use crate::book::backend::OrderBookBackend;
     pub use crate::codec::CommandCodec;
+    pub use crate::engine::events::OrderEventListener;
+    pub use crate::engine::sbe_listener::SbeEncoderListener;
     pub use crate::engine::Engine;
     pub use crate::orders::*;
     pub use crate::outcome::*;
