@@ -1,88 +1,162 @@
-# MT-Engine Core
+# MT-Engine
 
-本项目是 **MT-Engine** 的核心撮合内核，采用单线程、事件驱动的状态机架构。
+[English](README.md) | [中文](README_ZH.md)
 
-## 零堆分配架构 (Zero-Allocation)
-
-为了追求极低且确定的延迟，`mt-engine-core` 在撮合路径减少堆分配。
-
-### 缓冲区注入策略
-`Engine` 通过生命周期借用用户提供的外部响应缓冲区：
-```rust
-let mut resp_buf = [0u8; 65536]; // 栈或静态分配
-
-// 选择 A: SparseBackend (适用于长尾资产)
-// let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
-
-// 选择 B: DenseBackend (适用于主流资产，要求 O(1) 延迟)
-use mt_engine_core::book::backend::dense::{DenseBackend, PriceRange};
-let config = PriceRange { min: Price(1), max: Price(10_000), tick: Price(1) };
-let mut engine = Engine::new(DenseBackend::new(config, 100_000), &mut resp_buf);
-```
-这意味着引擎在生成成交回报（Trades）时，是直接在预定义的内存空间内进行偏移写入，而非动态分配 `Vec`。
-
-## 核心 API
-
-### 1. 指令编解码工厂 (CommandCodec)
-屏蔽 SBE 底层字节对齐逻辑，提供语义化报文构造入口：
-```rust
-let mut cmd_buf = [0u8; 1024];
-let mut codec = CommandCodec::new(&mut cmd_buf);
-
-// 极速构造限价单提交报文 (返回一个带生命周期的 Decoder)
-let decoder = codec.encode_submit(0, order_id, user_id, Side::buy, price, qty, seq, ts, TimeInForce::gtc);
-engine.execute_submit(&decoder);
-```
-
-### 2. 安全成交迭代器 (TradeIterator)
-所有撮合结果通过类型化迭代器安全读取，彻底杜绝原始字节偏移量计算风险：
-```rust
-if let CommandOutcome::Applied(report) = outcome {
-    for trade in report.trades() {
-        println!("Trade: {} @ {}", trade.quantity(), trade.price());
-    }
-}
-```
-## 支持的指令与订单类型
-
-MT-Engine 核心通过 `CommandCodec` 与 `Engine` 配合，完整支持以下工业级交易场景：
-
-### 1. 基础订单类型 (Order Types)
-- **限价单 (Limit Order)**: 严格遵循价格-时间优先原则。
-- **市价单 (Market Order)**: 以 TIF=IOC 模式极速横扫对方盘口，直至全部成交或流动性枯竭。
-- **止损单 (Stop / Stop-Limit)**: 由 **LTP (最新成交价)** 驱动。订单初始进入触发池，当 LTP 满足触发价时自动激活进入撮合。
-
-### 2. 生效策略 (Time In Force)
-- **GTC (Good Till Cancel)**: 永久有效，直至成交或被撤单。
-- **IOC (Immediate Or Cancel)**: 立即成交，未成交部分自动撤单。
-- **FOK (Fill Or Kill)**: 必须全部成交，否则整单取消。
-- **GTD/GTH (Good Till Date/Hour)**: 结合 SBE 协议中的时间戳实现**延迟失效检查**。
-
-### 3. 高级执行策略 (Advanced Strategies)
-- **只做 Maker (Post-Only)**: 采用 **Lazy Validation** 机制，若订单会立即成交则直接拒绝，确保订单始终作为 Maker 进入深度，享受手续费返还。
-- **冰山订单 (Iceberg)**: 自动管理 `visible_qty` 和 `peak_size`。当可见部分成交后，系统自动执行 $O(1)$ 重排队并刷新盘口。
+**MT-Engine** is a high-frequency trading matching engine core built with Rust. It achieves extreme performance and zero-allocation on the hot path. It is designed for ultra-low latency trading scenarios and natively supports SBE (Simple Binary Encoding).
 
 ---
 
-## 性能白皮书 (Final Benches)
+## ⚡ Performance & Dual Engine Architecture
 
-基于 **Apple M4 (Criterion Optimized)** 的实测数据，所有指标均在极高负载下保持纳秒级抖动：
+MT-Engine innovatively provides two order book backends, allowing the system to switch at runtime based on the liquidity characteristics of the trading pairs. Both achieve zero-allocation and fully exploit CPU cache efficiency:
 
-| 撮合场景 | 平均延迟 (Latency) | 吞吐量 (Throughput) |
+### 1. Performance Benchmarks
+Benchmarked under **50,000 order steady-state saturation** with strictly **monotonic OrderIDs**, our shootout covers the complete lifecycle (Submit + Match/Cancel) using a `MixedWorkload` (Standard, Iceberg, Stop, Post-Only):
+
+| Backend Configuration | Snapshot Features | Avg Latency (ns/op) | Performance Notes |
+| :--- | :---: | :---: | :--- |
+| **`DenseBackend`** | OFF | **~15.6 ns** | 🚀 **O(1)** logic, zero-leak steady state |
+| **`SparseBackend`** | OFF | ~30.8 ns | 🧩 Memory efficient (O(log N)) |
+| **`SparseBackend`** | **ON** | **~30.8 ns** | 🛡️ **Zero-Cost Abstraction verified** |
+| **`Dense + Snapshot`**| N/A | Mutually Exclusive | Use `serde` for direct array persistence |
+
+*(Note: These benchmarks reflect high-fidelity steady-state performance. The inclusion of **O(1) OrderID Monotonicity Guards** has further optimized the hot path by removing redundant map lookups for uniqueness.)*
+
+### 2. Architecture Differences
+
+| Core Feature | `DenseBackend` 🚀 | `SparseBackend` 🧩 |
 | :--- | :--- | :--- |
-| **标准限价单匹配 (Standard Limit)** | **~31.3 ns** | ~31.9M ops/sec |
-| **单档连续撮合 (Single Level)** | **~34.4 ns** | ~29.1M ops/sec |
-| **深度横扫 (Sweep 20 Levels)** | **~32.2 ns** | ~31.0M ops/sec |
-| **冰山单重排队 (Iceberg Refresh)** | **~31.7 ns** | ~31.5M ops/sec |
-| **GTD 延迟检查 (GTD Matching)** | **~28.6 ns** | ~34.9M ops/sec |
+| **Best Use Case** | **Mainstream core assets (e.g., BTC/ETH)** requiring ultra-low latency | **Altcoins, long-tail assets**, many trading pairs, dispersed liquidity |
+| **Underlying Data Structure** | `L3 Bitset` + Static Array + Intrusive Doubly Linked List | `BTreeMap` + `Slab` + `HashMap` |
+| **Best Bid/Ask Search** | **O(1)** (Using hardware CTZ bitwise operations) | **O(log N)** (Red-Black Tree navigation) |
+| **Order Queuing & Cancel** | **O(1) / O(1)** (Intrusive pointers, in-place removal) | **O(log N) / O(N)** (VecDeque based, requires traversal) |
+| **Memory Allocation** | One-time pre-allocation at initialization, no runtime resizing overhead | Dynamic allocation at runtime (Slab and Map resize as needed) |
+| **Footprint**| **Extremely High** (Depends on `PriceRange` and capacity) | **Extremely Low** (Allocated on demand, strictly proportional to active orders) |
 
-| 管理与开销 | 平均延迟 (Latency) | 吞吐量 (Throughput) |
-| :--- | :--- | :--- |
-| **极速撤单 (Cancel Order)** | **~2.1 ns** | ~476M ops/sec |
-| **Post-Only 拦截 (Rejected)** | **~7.6 ns** | ~131M ops/sec |
-| **Stop Order 触发检查 (Inactive)** | **~8.6 ns** | ~116M ops/sec |
-| **SBE 编解码 (9 Fields)** | **~2.7 ns** | ~370M ops/sec |
+---
 
-> [!TIP]
-> 上述数据包含完整的 SBE 编码、内存安全性检查以及订单簿状态机更新开销。本引擎严格遵循单线程 LMAX Disrupter 架构设计，在真实的生产环境下（开启 CPU 绑定与大页内存）性能表现将更加稳定。
+## 🚀 Core Features
 
+- 🛡️ **SBE Native**: Fast path processing of binary messages based on Simple Binary Encoding.
+- 🩸 **Zero-Allocation**: The hot path (including conditional order cascading triggers) completely eliminates any dynamic memory allocation.
+- 🧊 **Cache Optimized**: `OrderData` uses 128-byte alignment, combined with `_mm_prefetch` hardware prefetching and SoA abstraction to maximize CPU cache hit rates.
+- 🔄 **Advanced Features**: Natively supports iceberg orders, stop-loss triggers (O(1) cascading trigger pool), Post-Only slippage control, GTD/IOC/FOK, and end-to-end validation.
+- 🛡️ **ID Integrity Guard**: Built-in $O(1)$ validation to enforce strictly monotonic and unique OrderIDs, preventing state corruption at the gateway.
+
+---
+
+## 🛡️ Integration Requirements
+
+To achieve ultra-low latency and maintain system integrity, integration with MT-Engine must respect the following constraints:
+
+### 1. Strictly Monotonic OrderIDs
+Order IDs MUST be **strictly increasing** and **unique** for each symbol/engine instance:
+- **Requirement**: `new_id > last_order_id`. In **Dense Mode**, the ID must also fall within `[1, capacity]` for deterministic physical indexing (managed by OMS via ID recycling).
+- **Validation**: Engine performs an $O(1)$ hardware-friendly numerical check at the entry point.
+- **Reaction**: Requests with duplicate or regressing IDs are immediately rejected with `DuplicateOrderId`.
+- **Reason**: This eliminates the need for expensive hash map lookups for uniqueness checks, maintaining sub-20ns latency.
+
+### 2. SBE Protocol Standard
+All commands and reports follow the **Simple Binary Encoding (SBE)** standard:
+- **Zero-Allocation**: Messages are decoded and encoded directly in pre-allocated buffers.
+- **Fixed-Width Offset**: Efficient field access without variable-length parsing overhead.
+- **Schema**: Use the provided XML schemas in `/schemas` to generate your language-specific encoders.
+
+---
+
+---
+
+## 📦 Installation
+
+Add this to your `Cargo.toml`:
+
+```toml
+[dependencies]
+mt-engine-core = "0.1.0"
+# If you need to interface with the SBE protocol directly:
+# mt_engine = "0.1.0"
+```
+
+## 📖 User Guide
+
+### 1. Constructing & Executing Orders
+Use `CommandCodec` for lock-free, zero-allocation message construction. The engine supports two order book backends:
+- `SparseBackend`: Based on BTreeMap, suitable for long-tail assets with sparse prices.
+- `DenseBackend`: Based on L3 Bitset and pre-allocated arrays, suitable for mainstream assets with dense prices, providing O(1) extreme performance.
+
+```rust
+use mt_engine_core::prelude::*;
+use mt_engine_core::codec::CommandCodec;
+use mt_engine_core::book::backend::dense::{DenseBackend, PriceRange};
+use mt_engine_core::book::backend::sparse::SparseBackend;
+
+// 1. Initialize engine and buffers
+let mut resp_buf = [0u8; 1024];
+let mut cmd_buf = [0u8; 1024];
+
+// Option A: Use the general Sparse Engine
+// let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+
+// Option B: Use the high-performance Dense Engine (e.g., Price range 100~200, tick=1, capacity 1024)
+let config = PriceRange { min: Price(100), max: Price(200), tick: Price(1) };
+let mut engine = Engine::new(DenseBackend::new(config, 1024), &mut resp_buf);
+let mut codec = CommandCodec::new(&mut cmd_buf);
+
+// 2. Construct a Post-Only order
+let mut flags = OrderFlags::new(0);
+flags.set_post_only(true);
+
+let cmd = codec.encode_submit_ext(
+    0,                      // buffer offset
+    OrderId(1001),          // order_id
+    UserId(201),            // user_id
+    Side::buy,
+    OrderType::limit,
+    Price(10000),           // price
+    Quantity(100),          // quantity
+    SequenceNumber(1),      // sequence
+    Timestamp(1712460000),  // timestamp
+    TimeInForce::gtc,
+    flags
+);
+
+// 3. Execute matching
+let outcome = engine.execute_submit(&cmd);
+match outcome {
+    CommandOutcome::Applied(report) => println!("Order Placed: {:?}", report.status),
+    CommandOutcome::Rejected(fail) => println!("Rejected: {:?}", fail),
+}
+```
+
+### 2. Running Performance Tests
+```bash
+# Run strategy-specific benchmarks
+cargo bench -p mt-engine-core --bench matching_engine -- Strategies
+```
+
+---
+
+## 🛠️ Feature Matrix
+
+| Feature | Status | Details |
+| :--- | :---: | :--- |
+| **GTC / IOC / FOK** | ✅ | Fully supported |
+| **GTD / GTH** | ✅ | Millisecond-level lazy expiration |
+| **Post-Only** | ✅ | Price crossing interception (Lazy Validation) |
+| **Iceberg** | ✅ | Auto-refresh, FIFO re-queuing, and hidden penetration |
+| **Stop / Stop-Limit** | ✅ | LTP O(1) triggering with zero-allocation cascading pool |
+| **Self-Trade Prevention** | 🏛️ | Recommended to handle at the OMS layer |
+
+---
+
+## Developer Documentation
+
+- [📜 Transaction Types](docs/TRANSACTION_TYPES.md)
+- [🏗️ Architecture](docs/ARCHITECTURE.md)
+- [🔌 SBE Integration Guide](docs/SBE_INTEGRATION_GUIDE.md)
+
+---
+
+## 📜 License
+
+This project is licensed under the **Apache License 2.0**. For details, please see the [LICENSE](LICENSE) file in the project root.
