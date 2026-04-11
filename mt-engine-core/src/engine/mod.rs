@@ -1,6 +1,9 @@
 pub mod events;
 pub use events::OrderEventListener;
 
+pub mod sbe_listener;
+pub use sbe_listener::SbeEncoderListener;
+
 use crate::book::backend::sparse::SparseBackend;
 use crate::book::backend::OrderBookBackend;
 use crate::orders::{OrderData, RestingOrder};
