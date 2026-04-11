@@ -1409,7 +1409,10 @@ fn test_engine_dense_matching() {
         max: Price(200),
         tick: Price(1),
     };
-    let mut engine = Engine::new(DenseBackend::new(config, 1024), SbeEncoderListener::new(&mut resp_buf));
+    let mut engine = Engine::new(
+        DenseBackend::new(config, 1024),
+        SbeEncoderListener::new(&mut resp_buf),
+    );
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Submit Limit BUY 10 @ 150 (Maker)
@@ -1467,7 +1470,10 @@ fn test_dense_fifo_priority() {
         max: Price(200),
         tick: Price(1),
     };
-    let mut engine = Engine::new(DenseBackend::new(config, 1024), SbeEncoderListener::new(&mut resp_buf));
+    let mut engine = Engine::new(
+        DenseBackend::new(config, 1024),
+        SbeEncoderListener::new(&mut resp_buf),
+    );
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Maker 1 & 2 at same price 150
@@ -1527,7 +1533,10 @@ fn test_dense_best_price_search() {
         max: Price(200),
         tick: Price(1),
     };
-    let mut engine = Engine::new(DenseBackend::new(config, 1024), SbeEncoderListener::new(&mut resp_buf));
+    let mut engine = Engine::new(
+        DenseBackend::new(config, 1024),
+        SbeEncoderListener::new(&mut resp_buf),
+    );
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Asks at 110, 105, 120
@@ -1605,7 +1614,10 @@ fn test_dense_cancellation_positions() {
         max: Price(200),
         tick: Price(1),
     };
-    let mut engine = Engine::new(DenseBackend::new(config, 1024), SbeEncoderListener::new(&mut resp_buf));
+    let mut engine = Engine::new(
+        DenseBackend::new(config, 1024),
+        SbeEncoderListener::new(&mut resp_buf),
+    );
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Fill a level with 3 orders
@@ -1683,7 +1695,10 @@ fn test_dense_amend_logic() {
         max: Price(200),
         tick: Price(1),
     };
-    let mut engine = Engine::new(DenseBackend::new(config, 1024), SbeEncoderListener::new(&mut resp_buf));
+    let mut engine = Engine::new(
+        DenseBackend::new(config, 1024),
+        SbeEncoderListener::new(&mut resp_buf),
+    );
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Maker 1: Sell 20 @ 150
@@ -1747,7 +1762,10 @@ fn test_dense_tif_ioc_fok() {
         max: Price(200),
         tick: Price(1),
     };
-    let mut engine = Engine::new(DenseBackend::new(config, 1024), SbeEncoderListener::new(&mut resp_buf));
+    let mut engine = Engine::new(
+        DenseBackend::new(config, 1024),
+        SbeEncoderListener::new(&mut resp_buf),
+    );
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Maker: Sell 5 @ 150
@@ -1820,7 +1838,10 @@ fn test_dense_stop_limit_trigger() {
         max: Price(200),
         tick: Price(1),
     };
-    let mut engine = Engine::new(DenseBackend::new(config, 1024), SbeEncoderListener::new(&mut resp_buf));
+    let mut engine = Engine::new(
+        DenseBackend::new(config, 1024),
+        SbeEncoderListener::new(&mut resp_buf),
+    );
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Stop Sell 10 @ 140, Triggered when LTP <= 145
@@ -1887,7 +1908,10 @@ fn test_dense_boundary_prices() {
         max: Price(200),
         tick: Price(1),
     };
-    let mut engine = Engine::new(DenseBackend::new(config, 1024), SbeEncoderListener::new(&mut resp_buf));
+    let mut engine = Engine::new(
+        DenseBackend::new(config, 1024),
+        SbeEncoderListener::new(&mut resp_buf),
+    );
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Min Price 100
@@ -1928,7 +1952,10 @@ fn test_dense_pool_exhaustion() {
         max: Price(200),
         tick: Price(1),
     };
-    let mut engine = Engine::new(DenseBackend::new(config, 10), SbeEncoderListener::new(&mut resp_buf)); // Small pool
+    let mut engine = Engine::new(
+        DenseBackend::new(config, 10),
+        SbeEncoderListener::new(&mut resp_buf),
+    ); // Small pool
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // Fill the pool (10 orders)
@@ -1962,7 +1989,10 @@ fn test_dense_out_of_bounds_price() {
         max: Price(200),
         tick: Price(1),
     };
-    let mut engine = Engine::new(DenseBackend::new(config, 10), SbeEncoderListener::new(&mut resp_buf));
+    let mut engine = Engine::new(
+        DenseBackend::new(config, 10),
+        SbeEncoderListener::new(&mut resp_buf),
+    );
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Price 99 (Below Min)
@@ -2043,7 +2073,10 @@ fn test_engine_snapshot_recovery() {
 
     // 3. 在一个新的 SparseBackend 引擎上恢复
     let mut resp_buf2 = [0u8; 4096];
-    let mut engine_sparse = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf2));
+    let mut engine_sparse = Engine::new(
+        SparseBackend::new(),
+        SbeEncoderListener::new(&mut resp_buf2),
+    );
     engine_sparse.from_snapshot(snapshot.clone());
 
     assert_eq!(engine_sparse.backend.best_bid_price().unwrap().0, 100);
@@ -2056,7 +2089,10 @@ fn test_engine_snapshot_recovery() {
         tick: Price(1),
     };
     let mut resp_buf3 = [0u8; 4096];
-    let mut engine_dense = Engine::new(DenseBackend::new(dense_config, 1024), SbeEncoderListener::new(&mut resp_buf3));
+    let mut engine_dense = Engine::new(
+        DenseBackend::new(dense_config, 1024),
+        SbeEncoderListener::new(&mut resp_buf3),
+    );
     engine_dense.from_snapshot(snapshot);
 
     assert_eq!(engine_dense.backend.best_bid_price().unwrap().0, 100);
@@ -2128,14 +2164,17 @@ fn test_snapshot_complex_state_recovery() {
 
     // 2. 异构恢复到 DenseBackend
     let mut resp_buf2 = [0u8; 8192];
-    let mut engine_dense = Engine::new(DenseBackend::new(
+    let mut engine_dense = Engine::new(
+        DenseBackend::new(
             PriceRange {
                 min: Price(1),
                 max: Price(1000),
                 tick: Price(1),
             },
             1024,
-        ), SbeEncoderListener::new(&mut resp_buf2));
+        ),
+        SbeEncoderListener::new(&mut resp_buf2),
+    );
 
     engine_dense.from_snapshot(snapshot);
 
@@ -2145,7 +2184,10 @@ fn test_snapshot_complex_state_recovery() {
 
     // 验证条件单池
     assert_eq!(engine_dense.cond_manager.condition_order_store.len(), 1);
-    assert!(engine_dense.cond_manager.stop_buy_triggers.contains_key(&Price(120)));
+    assert!(engine_dense
+        .cond_manager
+        .stop_buy_triggers
+        .contains_key(&Price(120)));
 
     // 4. 继续撮合，验证逻辑连续性
     // 提交一个单子触发价格到 120，激活止损单
@@ -2364,7 +2406,10 @@ fn test_e2e_snapshot_portability() {
 
     // 4. 稀松节点恢复测试
     let mut resp_buf_s = [0u8; 8192];
-    let mut engine_s = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf_s));
+    let mut engine_s = Engine::new(
+        SparseBackend::new(),
+        SbeEncoderListener::new(&mut resp_buf_s),
+    );
     engine_s.from_snapshot(restored_model.clone());
 
     assert_eq!(engine_s.ltp.0, 110);
@@ -2379,20 +2424,29 @@ fn test_e2e_snapshot_portability() {
 
     // 验证条件单恢复
     assert_eq!(engine_s.cond_manager.condition_order_store.len(), 2);
-    assert!(engine_s.cond_manager.stop_buy_triggers.contains_key(&Price(120)));
-    assert!(engine_s.cond_manager.stop_sell_triggers.contains_key(&Price(80)));
+    assert!(engine_s
+        .cond_manager
+        .stop_buy_triggers
+        .contains_key(&Price(120)));
+    assert!(engine_s
+        .cond_manager
+        .stop_sell_triggers
+        .contains_key(&Price(80)));
 
     // 5. Dense-node 恢复测试
     {
         let mut resp_buf_d = [0u8; 8192];
-        let mut engine_d = Engine::new(DenseBackend::new(
+        let mut engine_d = Engine::new(
+            DenseBackend::new(
                 PriceRange {
                     min: Price(1),
                     max: Price(1000),
                     tick: Price(1),
                 },
                 1024,
-            ), SbeEncoderListener::new(&mut resp_buf_d));
+            ),
+            SbeEncoderListener::new(&mut resp_buf_d),
+        );
         engine_d.from_snapshot(restored_model);
 
         assert_eq!(engine_d.ltp.0, 110);
@@ -2460,7 +2514,10 @@ fn test_dense_id_out_of_bounds() {
         tick: Price(1),
     };
     // 限制 Max Order ID 为 1000
-    let mut engine = Engine::new(DenseBackend::new(config, 1024), SbeEncoderListener::new(&mut resp_buf));
+    let mut engine = Engine::new(
+        DenseBackend::new(config, 1024),
+        SbeEncoderListener::new(&mut resp_buf),
+    );
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. 提交 ID 为 1025 的订单 (越界)
@@ -2719,7 +2776,10 @@ fn test_iceberg_match_limit_by_visible_qty() {
         max: Price(150),
         tick: Price(1),
     };
-    let mut engine = Engine::new(DenseBackend::new(config, 1024), SbeEncoderListener::new(&mut resp_buf));
+    let mut engine = Engine::new(
+        DenseBackend::new(config, 1024),
+        SbeEncoderListener::new(&mut resp_buf),
+    );
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Manually setup an Iceberg order with peak_size < remaining_qty
