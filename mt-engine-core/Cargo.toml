@@ -1,10 +1,13 @@
 [package]
 name = "mt-engine-core"
 version = "0.1.0"
+description = "High-performance matching engine core"
+license = "Apache-2.0"
+repository = "https://github.com/JiaoziExchange/mt-engine"
 edition = "2021"
 
 [dependencies]
-mt_engine = { path = "../mt-engine-sbe", features = ["rkyv"] }
+mt_engine = { path = "../mt-engine-sbe", version = "0.1.0", features = ["rkyv"] }
 slab = { version = "0.4", features = ["serde"] }
 rustc-hash = "1.1"
 derive_more = "0.99"
