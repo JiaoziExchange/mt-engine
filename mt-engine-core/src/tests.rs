@@ -9,7 +9,7 @@ fn test_engine_basic_matching() {
     let mut resp_buf = [0u8; 1024];
     let mut cmd_buf = [0u8; 1024];
 
-    let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+    let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Submit Limit BUY 10 @ 150 (Maker)
@@ -65,7 +65,7 @@ fn test_engine_basic_matching() {
 fn test_engine_tif_ioc() {
     let mut resp_buf = [0u8; 1024];
     let mut cmd_buf = [0u8; 1024];
-    let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+    let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Maker: Sell 5 @ 100
@@ -108,7 +108,7 @@ fn test_engine_tif_ioc() {
 fn test_engine_fifo_priority() {
     let mut resp_buf = [0u8; 2048];
     let mut cmd_buf = [0u8; 1024];
-    let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+    let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Maker 1 & 2 at same price 100
@@ -168,7 +168,7 @@ fn test_engine_fifo_priority() {
 fn test_engine_market_order() {
     let mut resp_buf = [0u8; 1024];
     let mut cmd_buf = [0u8; 1024];
-    let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+    let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Maker 1 @ 100, Maker 2 @ 101
@@ -219,7 +219,7 @@ fn test_engine_market_order() {
 fn test_engine_cancellation() {
     let mut resp_buf = [0u8; 128];
     let mut cmd_buf = [0u8; 512];
-    let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+    let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     codec.encode_submit(
@@ -257,7 +257,7 @@ fn test_engine_cancellation() {
 fn test_engine_amend() {
     let mut resp_buf = [0u8; 128];
     let mut cmd_buf = [0u8; 512];
-    let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+    let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     engine.execute_submit(&codec.encode_submit(
@@ -292,7 +292,7 @@ fn test_engine_amend() {
 fn test_engine_sequence_gap() {
     let mut resp_buf = [0u8; 128];
     let mut cmd_buf = [0u8; 512];
-    let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+    let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     engine.execute_submit(&codec.encode_submit(
@@ -328,7 +328,7 @@ fn test_engine_sequence_gap() {
 fn test_engine_tif_fok_insufficient() {
     let mut resp_buf = [0u8; 128];
     let mut cmd_buf = [0u8; 512];
-    let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+    let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     engine.execute_submit(&codec.encode_submit(
@@ -366,7 +366,7 @@ use mt_engine::order_type::OrderType;
 fn test_engine_post_only() {
     let mut resp_buf = [0u8; 1024];
     let mut cmd_buf = [0u8; 1024];
-    let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+    let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Maker: Sell 10 @ 100
@@ -409,7 +409,7 @@ fn test_engine_post_only() {
 fn test_engine_iceberg_requeue() {
     let mut resp_buf = [0u8; 4096];
     let mut cmd_buf = [0u8; 1024];
-    let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+    let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Maker 1: Regular Sell 10 @ 100
@@ -509,7 +509,7 @@ fn test_engine_iceberg_requeue() {
 fn test_engine_stop_order_reception() {
     let mut resp_buf = [0u8; 128];
     let mut cmd_buf = [0u8; 512];
-    let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+    let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // Submit Stop Buy @ 150
@@ -541,7 +541,7 @@ fn test_engine_stop_order_reception() {
 fn test_engine_lazy_expiry() {
     let mut resp_buf = [0u8; 1024];
     let mut cmd_buf = [0u8; 1024];
-    let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+    let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Submit Limit SELL 10 @ 100, Expiry = 2000
@@ -588,7 +588,7 @@ fn test_engine_lazy_expiry() {
 fn test_engine_gtd_fill_before_expiry() {
     let mut resp_buf = [0u8; 1024];
     let mut cmd_buf = [0u8; 1024];
-    let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+    let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. GTD Sell 10 @ 100, Expiry 2000
@@ -628,7 +628,7 @@ fn test_engine_gtd_fill_before_expiry() {
 fn test_complex_scenario_multi_strategy() {
     let mut resp_buf = [0u8; 8192];
     let mut cmd_buf = [0u8; 1024];
-    let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+    let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     println!("\n======= [MEGA TEST: Multi-Strategy Verification] =======");
@@ -748,7 +748,7 @@ fn test_complex_scenario_multi_strategy() {
 fn test_numerical_correctness_and_iceberg_logic() {
     let mut resp_buf = [0u8; 8192];
     let mut cmd_buf = [0u8; 1024];
-    let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+    let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     println!("\n======= [Numerical Correctness & Iceberg Verification] =======");
@@ -877,7 +877,7 @@ fn test_numerical_correctness_and_iceberg_logic() {
 fn test_sl_tp_triggers() {
     let mut resp_buf = [0u8; 4096];
     let mut cmd_buf = [0u8; 1024];
-    let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+    let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // Initial LTP = 0. Submit a maker to establish a higher LTP.
@@ -972,7 +972,7 @@ fn test_sl_tp_triggers() {
 fn test_recursive_trigger() {
     let mut resp_buf = [0u8; 4096];
     let mut cmd_buf = [0u8; 1024];
-    let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+    let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Resting Sell 10 @ 100
@@ -1042,7 +1042,7 @@ fn test_recursive_trigger() {
 fn test_large_scale_stress() {
     let mut resp_buf = [0u8; 1024 * 1024]; // 1MB
     let mut cmd_buf = [0u8; 1024];
-    let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+    let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Stress: Insert 10,000 orders across wide price range
@@ -1128,7 +1128,7 @@ fn test_large_scale_stress() {
 fn test_e2e_stop_limit_slippage() {
     let mut resp_buf = [0u8; 4096];
     let mut cmd_buf = [0u8; 1024];
-    let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+    let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Maker Sell 10 @ 160
@@ -1208,7 +1208,7 @@ fn test_e2e_stop_limit_slippage() {
 fn test_e2e_iceberg_fok_fill() {
     let mut resp_buf = [0u8; 4096];
     let mut cmd_buf = [0u8; 1024];
-    let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+    let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Iceberg Sell 100 @ 100 (Peak 10)
@@ -1258,7 +1258,7 @@ fn test_e2e_iceberg_fok_fill() {
 fn test_e2e_cascading_volatility() {
     let mut resp_buf = [0u8; 8192];
     let mut cmd_buf = [0u8; 1024];
-    let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+    let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Resting Buy Maker 100 @ 90
@@ -1348,7 +1348,7 @@ fn test_e2e_cascading_volatility() {
 fn test_e2e_gtd_trigger_expiry() {
     let mut resp_buf = [0u8; 4096];
     let mut cmd_buf = [0u8; 1024];
-    let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+    let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Stop Buy 10 @ 100, GTD Expires at 2000
@@ -1409,7 +1409,7 @@ fn test_engine_dense_matching() {
         max: Price(200),
         tick: Price(1),
     };
-    let mut engine = Engine::new(DenseBackend::new(config, 1024), &mut resp_buf);
+    let mut engine = Engine::new(DenseBackend::new(config, 1024), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Submit Limit BUY 10 @ 150 (Maker)
@@ -1467,7 +1467,7 @@ fn test_dense_fifo_priority() {
         max: Price(200),
         tick: Price(1),
     };
-    let mut engine = Engine::new(DenseBackend::new(config, 1024), &mut resp_buf);
+    let mut engine = Engine::new(DenseBackend::new(config, 1024), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Maker 1 & 2 at same price 150
@@ -1527,7 +1527,7 @@ fn test_dense_best_price_search() {
         max: Price(200),
         tick: Price(1),
     };
-    let mut engine = Engine::new(DenseBackend::new(config, 1024), &mut resp_buf);
+    let mut engine = Engine::new(DenseBackend::new(config, 1024), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Asks at 110, 105, 120
@@ -1605,7 +1605,7 @@ fn test_dense_cancellation_positions() {
         max: Price(200),
         tick: Price(1),
     };
-    let mut engine = Engine::new(DenseBackend::new(config, 1024), &mut resp_buf);
+    let mut engine = Engine::new(DenseBackend::new(config, 1024), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Fill a level with 3 orders
@@ -1683,7 +1683,7 @@ fn test_dense_amend_logic() {
         max: Price(200),
         tick: Price(1),
     };
-    let mut engine = Engine::new(DenseBackend::new(config, 1024), &mut resp_buf);
+    let mut engine = Engine::new(DenseBackend::new(config, 1024), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Maker 1: Sell 20 @ 150
@@ -1747,7 +1747,7 @@ fn test_dense_tif_ioc_fok() {
         max: Price(200),
         tick: Price(1),
     };
-    let mut engine = Engine::new(DenseBackend::new(config, 1024), &mut resp_buf);
+    let mut engine = Engine::new(DenseBackend::new(config, 1024), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Maker: Sell 5 @ 150
@@ -1820,7 +1820,7 @@ fn test_dense_stop_limit_trigger() {
         max: Price(200),
         tick: Price(1),
     };
-    let mut engine = Engine::new(DenseBackend::new(config, 1024), &mut resp_buf);
+    let mut engine = Engine::new(DenseBackend::new(config, 1024), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Stop Sell 10 @ 140, Triggered when LTP <= 145
@@ -1887,7 +1887,7 @@ fn test_dense_boundary_prices() {
         max: Price(200),
         tick: Price(1),
     };
-    let mut engine = Engine::new(DenseBackend::new(config, 1024), &mut resp_buf);
+    let mut engine = Engine::new(DenseBackend::new(config, 1024), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Min Price 100
@@ -1928,7 +1928,7 @@ fn test_dense_pool_exhaustion() {
         max: Price(200),
         tick: Price(1),
     };
-    let mut engine = Engine::new(DenseBackend::new(config, 10), &mut resp_buf); // Small pool
+    let mut engine = Engine::new(DenseBackend::new(config, 10), SbeEncoderListener::new(&mut resp_buf)); // Small pool
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // Fill the pool (10 orders)
@@ -1962,7 +1962,7 @@ fn test_dense_out_of_bounds_price() {
         max: Price(200),
         tick: Price(1),
     };
-    let mut engine = Engine::new(DenseBackend::new(config, 10), &mut resp_buf);
+    let mut engine = Engine::new(DenseBackend::new(config, 10), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Price 99 (Below Min)
@@ -2010,7 +2010,7 @@ fn test_engine_snapshot_recovery() {
     let mut cmd_buf = [0u8; 1024];
 
     // 1. 在 SparseBackend 上构建初始状态
-    let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+    let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 提交一些订单
@@ -2043,7 +2043,7 @@ fn test_engine_snapshot_recovery() {
 
     // 3. 在一个新的 SparseBackend 引擎上恢复
     let mut resp_buf2 = [0u8; 4096];
-    let mut engine_sparse = Engine::new(SparseBackend::new(), &mut resp_buf2);
+    let mut engine_sparse = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf2));
     engine_sparse.from_snapshot(snapshot.clone());
 
     assert_eq!(engine_sparse.backend.best_bid_price().unwrap().0, 100);
@@ -2056,7 +2056,7 @@ fn test_engine_snapshot_recovery() {
         tick: Price(1),
     };
     let mut resp_buf3 = [0u8; 4096];
-    let mut engine_dense = Engine::new(DenseBackend::new(dense_config, 1024), &mut resp_buf3);
+    let mut engine_dense = Engine::new(DenseBackend::new(dense_config, 1024), SbeEncoderListener::new(&mut resp_buf3));
     engine_dense.from_snapshot(snapshot);
 
     assert_eq!(engine_dense.backend.best_bid_price().unwrap().0, 100);
@@ -2073,7 +2073,7 @@ fn test_snapshot_complex_state_recovery() {
 
     let mut resp_buf = [0u8; 8192];
     let mut cmd_buf = [0u8; 1024];
-    let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+    let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. 准备复杂状态
@@ -2137,8 +2137,8 @@ fn test_snapshot_complex_state_recovery() {
             },
             1024,
         ),
-        &mut resp_buf2,
-    );
+        SbeEncoderListener::new(&mut resp_buf2), SbeEncoderListener::new());
+
     engine_dense.from_snapshot(snapshot);
 
     // 3. 验证状态
@@ -2186,7 +2186,7 @@ fn test_snapshot_trigger_threshold_logic() {
     use crate::snapshot::SnapshotConfig;
     let mut resp_buf = [0u8; 1024];
     let mut cmd_buf = [0u8; 1024];
-    let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+    let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     engine.snapshot_config = Some(SnapshotConfig {
@@ -2242,7 +2242,7 @@ fn test_e2e_snapshot_portability() {
 
     let mut resp_buf = [0u8; 16384];
     let mut cmd_buf = [0u8; 1024];
-    let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+    let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. 生成复杂状态
@@ -2366,7 +2366,7 @@ fn test_e2e_snapshot_portability() {
 
     // 4. 稀松节点恢复测试
     let mut resp_buf_s = [0u8; 8192];
-    let mut engine_s = Engine::new(SparseBackend::new(), &mut resp_buf_s);
+    let mut engine_s = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf_s));
     engine_s.from_snapshot(restored_model.clone());
 
     assert_eq!(engine_s.ltp.0, 110);
@@ -2396,8 +2396,7 @@ fn test_e2e_snapshot_portability() {
                 },
                 1024,
             ),
-            &mut resp_buf_d,
-        );
+            SbeEncoderListener::new(&mut resp_buf_d), SbeEncoderListener::new());
         engine_d.from_snapshot(restored_model);
 
         assert_eq!(engine_d.ltp.0, 110);
@@ -2465,7 +2464,7 @@ fn test_dense_id_out_of_bounds() {
         tick: Price(1),
     };
     // 限制 Max Order ID 为 1000
-    let mut engine = Engine::new(DenseBackend::new(config, 1024), &mut resp_buf);
+    let mut engine = Engine::new(DenseBackend::new(config, 1024), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. 提交 ID 为 1025 的订单 (越界)
@@ -2494,7 +2493,7 @@ fn test_dense_id_out_of_bounds() {
 fn test_gtd_taker_expired_at_submission() {
     let mut resp_buf = [0u8; 4096];
     let mut cmd_buf = [0u8; 1024];
-    let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+    let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Submit a GTD order that is already expired
@@ -2539,7 +2538,7 @@ fn test_gtd_taker_expired_at_submission() {
 fn test_gtd_taker_expired_at_amendment() {
     let mut resp_buf = [0u8; 4096];
     let mut cmd_buf = [0u8; 1024];
-    let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+    let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Maker Sell 10 @ 100
@@ -2589,7 +2588,7 @@ fn test_gtd_taker_expired_at_amendment() {
 fn test_gtd_stop_expired_at_trigger() {
     let mut resp_buf = [0u8; 8192];
     let mut cmd_buf = [0u8; 1024];
-    let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+    let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Resting Sell Maker 10 @ 100
@@ -2664,7 +2663,7 @@ fn test_gtd_stop_expired_at_trigger() {
 fn test_iceberg_amend_visible_qty_sync() {
     let mut resp_buf = [0u8; 1024];
     let mut cmd_buf = [0u8; 1024];
-    let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+    let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Submit Iceberg Buy 100 @ 100
@@ -2724,7 +2723,7 @@ fn test_iceberg_match_limit_by_visible_qty() {
         max: Price(150),
         tick: Price(1),
     };
-    let mut engine = Engine::new(DenseBackend::new(config, 1024), &mut resp_buf);
+    let mut engine = Engine::new(DenseBackend::new(config, 1024), SbeEncoderListener::new(&mut resp_buf));
     let mut codec = CommandCodec::new(&mut cmd_buf);
 
     // 1. Manually setup an Iceberg order with peak_size < remaining_qty

@@ -27,7 +27,7 @@ fn bench_matching_group(c: &mut Criterion) {
     // --- Scenario 1: Top of Book (Single Match) ---
     // SparseBackend
     group.bench_function("SingleLevel_Sparse", |b| {
-        let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+        let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
         let mut codec = CommandCodec::new(&mut cmd_buf);
         let maker = codec.encode_submit(
             0,
@@ -63,8 +63,7 @@ fn bench_matching_group(c: &mut Criterion) {
     group.bench_function("SingleLevel_Dense", |b| {
         let mut engine = Engine::new(
             DenseBackend::new(BENCH_CONFIG, BENCH_CAPACITY),
-            &mut resp_buf,
-        );
+            SbeEncoderListener::new(&mut resp_buf), SbeEncoderListener::new());
         let mut codec = CommandCodec::new(&mut cmd_buf);
         let maker = codec.encode_submit(
             0,
@@ -102,7 +101,7 @@ fn bench_matching_group(c: &mut Criterion) {
             BenchmarkId::new("Sparse_LevelSweep", depth),
             depth,
             |b, &depth| {
-                let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+                let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
                 let mut setup_buf = [0u8; 512];
                 let mut codec = CommandCodec::new(&mut setup_buf);
                 for i in 0..1000u64 {
@@ -164,10 +163,8 @@ fn bench_matching_group(c: &mut Criterion) {
             BenchmarkId::new("Dense_LevelSweep", depth),
             depth,
             |b, &depth| {
-                let mut engine = Engine::new(
-                    DenseBackend::new(BENCH_CONFIG, BENCH_CAPACITY),
-                    &mut resp_buf,
-                );
+                let mut engine = Engine::new(DenseBackend::new(BENCH_CONFIG, BENCH_CAPACITY),
+                    &mut resp_buf, SbeEncoderListener::new());
                 let mut setup_buf = [0u8; 512];
                 let mut codec = CommandCodec::new(&mut setup_buf);
                 for i in 0..1000u64 {
@@ -235,7 +232,7 @@ fn bench_management_group(c: &mut Criterion) {
 
     // SparseBackend
     group.bench_function("CancelOrder_Sparse", |b| {
-        let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+        let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
         let mut codec = CommandCodec::new(&mut cmd_buf);
         for i in 1..=10_000u64 {
             let dec = codec.encode_submit(
@@ -264,10 +261,8 @@ fn bench_management_group(c: &mut Criterion) {
 
     // DenseBackend
     group.bench_function("CancelOrder_Dense", |b| {
-        let mut engine = Engine::new(
-            DenseBackend::new(BENCH_CONFIG, BENCH_CAPACITY),
-            &mut resp_buf,
-        );
+        let mut engine = Engine::new(DenseBackend::new(BENCH_CONFIG, BENCH_CAPACITY),
+            &mut resp_buf, SbeEncoderListener::new());
         let mut codec = CommandCodec::new(&mut cmd_buf);
         for i in 1..=10_000u64 {
             let dec = codec.encode_submit(
@@ -335,7 +330,7 @@ fn bench_strat_group(c: &mut Criterion) {
 
     // SparseBackend
     group.bench_function("Sparse_Standard_Limit", |b| {
-        let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+        let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
         let mut codec = CommandCodec::new(&mut cmd_buf);
         let mut seq = 1u64;
         b.iter(|| {
@@ -360,7 +355,7 @@ fn bench_strat_group(c: &mut Criterion) {
     });
 
     group.bench_function("Sparse_Iceberg_Limit", |b| {
-        let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+        let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
         let mut codec = CommandCodec::new(&mut cmd_buf);
         let mut seq = 1u64;
         let mut flags = mt_engine::order_flags::OrderFlags::new(0);
@@ -389,7 +384,7 @@ fn bench_strat_group(c: &mut Criterion) {
     });
 
     group.bench_function("Sparse_PostOnly_Maker", |b| {
-        let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+        let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
         let mut codec = CommandCodec::new(&mut cmd_buf);
         let mut seq = 1u64;
         let mut flags = mt_engine::order_flags::OrderFlags::new(0);
@@ -419,10 +414,8 @@ fn bench_strat_group(c: &mut Criterion) {
 
     // DenseBackend
     group.bench_function("Dense_Standard_Limit", |b| {
-        let mut engine = Engine::new(
-            DenseBackend::new(BENCH_CONFIG, BENCH_CAPACITY),
-            &mut resp_buf,
-        );
+        let mut engine = Engine::new(DenseBackend::new(BENCH_CONFIG, BENCH_CAPACITY),
+            &mut resp_buf, SbeEncoderListener::new());
         let mut codec = CommandCodec::new(&mut cmd_buf);
         let mut seq = 1u64;
         b.iter(|| {
@@ -449,8 +442,7 @@ fn bench_strat_group(c: &mut Criterion) {
     group.bench_function("Dense_Iceberg_Limit", |b| {
         let mut engine = Engine::new(
             DenseBackend::new(BENCH_CONFIG, BENCH_CAPACITY),
-            &mut resp_buf,
-        );
+            &mut resp_buf, SbeEncoderListener::new());
         let mut codec = CommandCodec::new(&mut cmd_buf);
         let mut seq = 1u64;
         let mut flags = mt_engine::order_flags::OrderFlags::new(0);
@@ -481,8 +473,7 @@ fn bench_strat_group(c: &mut Criterion) {
     group.bench_function("Dense_PostOnly_Maker", |b| {
         let mut engine = Engine::new(
             DenseBackend::new(BENCH_CONFIG, BENCH_CAPACITY),
-            &mut resp_buf,
-        );
+            &mut resp_buf, SbeEncoderListener::new());
         let mut codec = CommandCodec::new(&mut cmd_buf);
         let mut seq = 1u64;
         let mut flags = mt_engine::order_flags::OrderFlags::new(0);
@@ -524,7 +515,7 @@ fn bench_intensity_group(c: &mut Criterion) {
             |b, &intensity| {
                 // 在每一循环内重新初始化，确保独立性
                 let mut resp_buf_vec = vec![0u8; 8 * 1024 * 1024];
-                let mut engine = Engine::new(SparseBackend::new(), resp_buf_vec.as_mut_slice());
+                let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(resp_buf_vec.as_mut_slice()));
                 let mut codec = CommandCodec::new(&mut cmd_buf);
 
                 for i in 1..=intensity {
@@ -588,7 +579,7 @@ fn bench_scalability_group(c: &mut Criterion) {
 
     // Scenario: Sparse insertion across 1B price range (Slab growth & BTreeMap balancing)
     group.bench_function("WidePrice_Sparse_100k", |b| {
-        let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+        let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
         let mut codec = CommandCodec::new(&mut cmd_buf);
         let mut seq = 1u64;
 
@@ -622,7 +613,7 @@ fn bench_trigger_load_group(c: &mut Criterion) {
 
     // Scenario: 1,000 cascading Stop orders
     group.bench_function("Cascading_Trigger_1k", |b| {
-        let mut engine = Engine::new(SparseBackend::new(), &mut resp_buf);
+        let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(&mut resp_buf));
         let mut codec = CommandCodec::new(&mut cmd_buf);
 
         // 1. Resting Sell Maker 2,000 @ 1,000,000
@@ -890,7 +881,7 @@ fn bench_mixed_workload_group(c: &mut Criterion) {
 
     // 1. Sparse Backend
     group.bench_function("Sparse_Mixed", |b| {
-        let mut engine = Engine::new(SparseBackend::new(), resp_buf);
+        let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(resp_buf));
         let mut codec = CommandCodec::new(&mut cmd_buf);
         let mut seq = 0u64;
         let mut seed = 42u64;
@@ -910,7 +901,7 @@ fn bench_mixed_workload_group(c: &mut Criterion) {
 
     // 2. Dense Backend
     group.bench_function("Dense_Mixed", |b| {
-        let mut engine = Engine::new(DenseBackend::new(BENCH_CONFIG, BENCH_CAPACITY), resp_buf);
+        let mut engine = Engine::new(DenseBackend::new(BENCH_CONFIG, BENCH_CAPACITY), SbeEncoderListener::new(resp_buf));
         let mut codec = CommandCodec::new(&mut cmd_buf);
         let mut seq = 0u64;
         let mut seed = 42u64;
@@ -931,7 +922,7 @@ fn bench_mixed_workload_group(c: &mut Criterion) {
     // 3. Sparse + Snapshot Logic Overhead
     #[cfg(feature = "snapshot")]
     group.bench_function("Sparse_Snapshot_Enabled_Mixed", |b| {
-        let mut engine = Engine::new(SparseBackend::new(), resp_buf);
+        let mut engine = Engine::new(SparseBackend::new(), SbeEncoderListener::new(resp_buf));
         engine.snapshot_config = Some(mt_engine_core::snapshot::SnapshotConfig {
             count_interval: 10_000_000,
             time_interval_ms: 3_600_000,

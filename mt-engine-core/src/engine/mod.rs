@@ -13,7 +13,6 @@ use crate::snapshot::rkyv_util::SlabWrapper;
 #[cfg(any(feature = "snapshot", feature = "rkyv", feature = "serde"))]
 use crate::snapshot::SnapshotModel;
 use crate::types::{OrderId, Price, Quantity, SequenceNumber, Timestamp, UserId};
-use mt_engine::message_header_codec;
 use mt_engine::order_amend_codec::decoder::OrderAmendDecoder;
 use mt_engine::order_cancel_codec::decoder::OrderCancelDecoder;
 use mt_engine::order_submit_codec::decoder::OrderSubmitDecoder;
@@ -21,8 +20,6 @@ use mt_engine::order_submit_gtd_codec::decoder::OrderSubmitGtdDecoder;
 use mt_engine::order_type::OrderType;
 use mt_engine::side::Side;
 use mt_engine::time_in_force::TimeInForce;
-use mt_engine::trade_codec;
-use mt_engine::WriteBuf;
 #[cfg(feature = "rkyv")]
 use rkyv::with::DeserializeWith;
 #[cfg(feature = "rkyv")]
@@ -52,14 +49,14 @@ use crate::snapshot::SnapshotConfig;
 
 /// 撮合引擎 - 单线程、极致性能状态机
 /// 方案 B：全链路零分配 & SBE 直接编码
-pub struct Engine<'a, B: OrderBookBackend = SparseBackend> {
+pub struct Engine<B: OrderBookBackend = SparseBackend, L: OrderEventListener = ()> {
     pub backend: B,
     pub(crate) last_sequence_number: SequenceNumber,
     pub(crate) last_timestamp: Timestamp,
     pub(crate) trade_id_seq: u64,
 
-    /// 用户提供的响应缓冲区 (Zero-Allocation & External Management)
-    response_buffer: &'a mut [u8],
+    /// 统一事件监听器 (替代直接的 response_buffer)
+    pub listener: L,
 
     /// 最新成交价 (Last Trade Price)
     pub(crate) ltp: Price,
@@ -96,14 +93,14 @@ pub struct Engine<'a, B: OrderBookBackend = SparseBackend> {
     pub(crate) pending_stop_map: FxHashMap<OrderId, (usize, u32)>,
 }
 
-impl<'a, B: OrderBookBackend> Engine<'a, B> {
-    pub fn new(backend: B, buffer: &'a mut [u8]) -> Self {
+impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
+    pub fn new(backend: B, listener: L) -> Self {
         Self {
             backend,
             last_sequence_number: SequenceNumber(0),
             last_timestamp: Timestamp(0),
             trade_id_seq: 0,
-            response_buffer: buffer,
+            listener,
             stop_buy_triggers: BTreeMap::new(),
             stop_sell_triggers: BTreeMap::new(),
             tp_buy_triggers: BTreeMap::new(),
@@ -271,7 +268,7 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
             order_id: taker_order.order_id,
             status: final_status,
             timestamp: ts,
-            payload: &self.response_buffer[..offset],
+            payload: self.listener.get_payload(offset),
         })
     }
 
@@ -346,7 +343,7 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
             order_id: taker_order.order_id,
             status: final_status,
             timestamp: ts,
-            payload: &self.response_buffer[..offset],
+            payload: self.listener.get_payload(offset),
         })
     }
 
@@ -456,34 +453,16 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
 
             self.trade_id_seq += 1;
 
-            // 编码 Trade 报告... (保持原有逻辑)
-            let trade_offset = *offset;
-            let trade_buf = WriteBuf::new(self.response_buffer);
-            let trade_encoder = trade_codec::encoder::TradeEncoder::default().wrap(
-                trade_buf,
-                trade_offset + message_header_codec::ENCODED_LENGTH,
+            self.listener.on_trade(
+                &maker_order.data,
+                taker_order,
+                Quantity(trade_qty),
+                opp_price,
+                ts,
+                seq,
+                self.trade_id_seq,
+                offset,
             );
-            let mut header_encoder = trade_encoder.header(trade_offset);
-
-            header_encoder.block_length(trade_codec::SBE_BLOCK_LENGTH);
-            header_encoder.template_id(trade_codec::SBE_TEMPLATE_ID);
-            header_encoder.schema_id(mt_engine::SBE_SCHEMA_ID);
-            header_encoder.version(mt_engine::SBE_SCHEMA_VERSION);
-
-            // 安全优化：使用 unwrap_unchecked 移除热路径分支判断。
-            // 理由：SBE 结构设计保证此处 header 后面紧跟 body，故 parent() 必为 Some。
-            let mut trade_encoder = unsafe { header_encoder.parent().unwrap_unchecked() };
-            trade_encoder.trade_id(self.trade_id_seq);
-            trade_encoder.maker_order_id(maker_order.data.order_id.0);
-            trade_encoder.taker_order_id(taker_order.order_id.0);
-            trade_encoder.side(taker_order.side);
-            trade_encoder.price(opp_price.0);
-            trade_encoder.quantity(trade_qty);
-            trade_encoder.timestamp(ts.0);
-            trade_encoder.sequence_number(seq.0);
-
-            *offset +=
-                message_header_codec::ENCODED_LENGTH + trade_codec::SBE_BLOCK_LENGTH as usize;
 
             // 更新最新成交价
             self.ltp = opp_price;
@@ -635,7 +614,7 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
                     order_id,
                     status: final_status,
                     timestamp: ts,
-                    payload: &self.response_buffer[..offset],
+                    payload: self.listener.get_payload(offset),
                 })
             }
         } else {
@@ -1093,3 +1072,4 @@ impl<'a, B: OrderBookBackend> Engine<'a, B> {
         println!("==========================================");
     }
 }
+

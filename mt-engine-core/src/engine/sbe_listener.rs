@@ -53,6 +53,11 @@ impl<'a> OrderEventListener for SbeEncoderListener<'a> {
 
         *offset += message_header_codec::ENCODED_LENGTH + trade_codec::SBE_BLOCK_LENGTH as usize;
     }
+
+    #[inline(always)]
+    fn get_payload(&self, offset: usize) -> &[u8] {
+        &self.response_buffer[..offset]
+    }
 }
 
 #[cfg(test)]
