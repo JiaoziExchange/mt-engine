@@ -77,7 +77,7 @@ The MT-Engine is designed for deterministic, high-frequency trading:
 
 ### Zero-Allocation
 - All commands are processed using steady-state buffers.
-- Responses (Trade reports) are encoded directly via SBE into a user-provided response buffer.
+- Responses (ExecutionReports, PublicTrades, DepthUpdates) are encoded directly via SBE into a user-provided response buffer.
 
 ### Cache Optimization
 - **Hardware Prefetch**: Uses x86_64 `_mm_prefetch` to load order data and condition orders into L1 Cache before they are accessed in the hot path.
@@ -91,10 +91,14 @@ The MT-Engine is designed for deterministic, high-frequency trading:
 
 ## Post-Trade Information
 
-Each successful transaction produces a `Trade` report via SBE:
-- `trade_id`: Unique trade identifier.
-- `maker_order_id`: ID of the passive order.
-- `taker_order_id`: ID of the aggressive order.
-- `price`: Execution price.
-- `quantity`: Execution quantity.
-- `timestamp`: Nanosecond timestamp.
+Each successful transaction produces an `ExecutionReport` for both the maker and the taker:
+- `order_id`: The ID of the order.
+- `status`: The updated status (e.g., `traded`).
+- `leaves_qty`: The remaining unfilled quantity of the order.
+- `cum_qty`: The total quantity executed so far.
+- `price`: The limit price of the order.
+- `quantity`: The total quantity of the order.
+
+If market data emission is enabled (i.e., non-dense node), the engine additionally emits:
+- `PublicTrade`: Contains public trade details (`trade_id`, `price`, `quantity`, `side`).
+- `DepthUpdate`: Contains the new total quantity at the affected price level.

@@ -27,7 +27,7 @@ Simple Binary Encoding (SBE) is a high-performance binary encoding standard, ini
 According to the MT-Engine architecture design document, all exposed structs are designed with fixed sizes to facilitate processing by SBE-generated parsers. The goals of integrating SBE are:
 
 1. **Command Serialization**: Serialize the `Command` structure into a binary format for network transmission or persistence.
-2. **Result Serialization**: Serialize `CommandOutcome` / `Trade` into a binary format.
+2. **Result Serialization**: Serialize `ExecutionReport` / `PublicTrade` / `DepthUpdate` into a binary format.
 3. **Cross-Language Interoperability**: Support message exchange with systems in other languages (e.g., Java, C++).
 4. **High-Performance Parsing**: Process inbound messages using SBE's zero-copy parsers.
 

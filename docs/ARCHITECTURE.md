@@ -32,7 +32,7 @@ MT-Engine is a high-performance, deterministic order matching engine library imp
 
 | Phase | Status | Description |
 |------|------|------|
-| **Phase 1: SBE Protocol Layer** | ✅ Done | Binary message encoding/decoding supporting OrderSubmit/Cancel/Amend/Trade. |
+| **Phase 1: SBE Protocol Layer** | ✅ Done | Binary message encoding/decoding supporting OrderSubmit/Cancel/Amend and ExecutionReport/PublicTrade/DepthUpdate. |
 | **Phase 2: Core Matching Engine** | ✅ Done | Implemented LTP-triggered stop-loss/take-profit, iceberg requeuing, and E2E strategies. |
 | **Phase 3: Optimization (Sparse)** | ✅ Done | Full-path zero-allocation, SBE unwrap_unchecked, hardware prefetching, cache-line ABI alignment. |
 | **Phase 4: Dense Engine & Scalability** | ✅ Done | Bitset-based tree-less backend, O(1) matching for dense assets. |
