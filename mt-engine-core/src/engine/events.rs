@@ -3,19 +3,49 @@ use crate::types::{Price, Quantity, SequenceNumber, Timestamp};
 
 pub trait OrderEventListener {
     /// Called when an order is accepted into the engine.
-    fn on_accepted(&mut self, order: &OrderData, ts: Timestamp, seq: SequenceNumber, offset: &mut usize);
+    fn on_accepted(
+        &mut self,
+        order: &OrderData,
+        ts: Timestamp,
+        seq: SequenceNumber,
+        offset: &mut usize,
+    );
 
     /// Called when an order is cancelled.
-    fn on_cancelled(&mut self, order: &OrderData, ts: Timestamp, seq: SequenceNumber, offset: &mut usize);
+    fn on_cancelled(
+        &mut self,
+        order: &OrderData,
+        ts: Timestamp,
+        seq: SequenceNumber,
+        offset: &mut usize,
+    );
 
     /// Called when an order is rejected.
-    fn on_rejected(&mut self, order: &OrderData, ts: Timestamp, seq: SequenceNumber, offset: &mut usize);
+    fn on_rejected(
+        &mut self,
+        order: &OrderData,
+        ts: Timestamp,
+        seq: SequenceNumber,
+        offset: &mut usize,
+    );
 
     /// Called when an order is amended.
-    fn on_amended(&mut self, order: &OrderData, ts: Timestamp, seq: SequenceNumber, offset: &mut usize);
+    fn on_amended(
+        &mut self,
+        order: &OrderData,
+        ts: Timestamp,
+        seq: SequenceNumber,
+        offset: &mut usize,
+    );
 
     /// Called when an order expires.
-    fn on_expired(&mut self, order: &OrderData, ts: Timestamp, seq: SequenceNumber, offset: &mut usize);
+    fn on_expired(
+        &mut self,
+        order: &OrderData,
+        ts: Timestamp,
+        seq: SequenceNumber,
+        offset: &mut usize,
+    );
 
     /// Called when a trade occurs.
     #[allow(clippy::too_many_arguments)]
@@ -48,19 +78,54 @@ pub trait OrderEventListener {
 
 impl OrderEventListener for () {
     #[inline(always)]
-    fn on_accepted(&mut self, _order: &OrderData, _ts: Timestamp, _seq: SequenceNumber, _offset: &mut usize) {}
+    fn on_accepted(
+        &mut self,
+        _order: &OrderData,
+        _ts: Timestamp,
+        _seq: SequenceNumber,
+        _offset: &mut usize,
+    ) {
+    }
 
     #[inline(always)]
-    fn on_cancelled(&mut self, _order: &OrderData, _ts: Timestamp, _seq: SequenceNumber, _offset: &mut usize) {}
+    fn on_cancelled(
+        &mut self,
+        _order: &OrderData,
+        _ts: Timestamp,
+        _seq: SequenceNumber,
+        _offset: &mut usize,
+    ) {
+    }
 
     #[inline(always)]
-    fn on_rejected(&mut self, _order: &OrderData, _ts: Timestamp, _seq: SequenceNumber, _offset: &mut usize) {}
+    fn on_rejected(
+        &mut self,
+        _order: &OrderData,
+        _ts: Timestamp,
+        _seq: SequenceNumber,
+        _offset: &mut usize,
+    ) {
+    }
 
     #[inline(always)]
-    fn on_amended(&mut self, _order: &OrderData, _ts: Timestamp, _seq: SequenceNumber, _offset: &mut usize) {}
+    fn on_amended(
+        &mut self,
+        _order: &OrderData,
+        _ts: Timestamp,
+        _seq: SequenceNumber,
+        _offset: &mut usize,
+    ) {
+    }
 
     #[inline(always)]
-    fn on_expired(&mut self, _order: &OrderData, _ts: Timestamp, _seq: SequenceNumber, _offset: &mut usize) {}
+    fn on_expired(
+        &mut self,
+        _order: &OrderData,
+        _ts: Timestamp,
+        _seq: SequenceNumber,
+        _offset: &mut usize,
+    ) {
+    }
 
     #[inline(always)]
     fn on_trade(

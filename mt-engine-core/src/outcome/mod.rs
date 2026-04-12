@@ -1,8 +1,8 @@
 use crate::types::{OrderId, Timestamp};
-use mt_engine::message_header_codec;
-use mt_engine::message_header_codec::decoder::MessageHeaderDecoder;
 use mt_engine::execution_report_codec;
 use mt_engine::execution_report_codec::decoder::ExecutionReportDecoder;
+use mt_engine::message_header_codec;
+use mt_engine::message_header_codec::decoder::MessageHeaderDecoder;
 use mt_engine::ReadBuf;
 
 /// Order Status
@@ -49,7 +49,8 @@ impl<'a> Iterator for ExecutionReportIterator<'a> {
                 return None;
             }
 
-            let header = MessageHeaderDecoder::default().wrap(ReadBuf::new(self.payload), self.offset);
+            let header =
+                MessageHeaderDecoder::default().wrap(ReadBuf::new(self.payload), self.offset);
             let template_id = header.template_id();
             let block_length = header.block_length() as usize;
             let msg_size = message_header_codec::ENCODED_LENGTH + block_length;

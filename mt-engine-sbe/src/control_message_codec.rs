@@ -101,9 +101,7 @@ pub mod encoder {
             let offset = self.offset + 9;
             self.get_buf_mut().put_u64_at(offset, value);
         }
-
     }
-
 } // end encoder
 
 pub mod decoder {
@@ -199,8 +197,5 @@ pub mod decoder {
         pub fn sequence_number(&self) -> u64 {
             self.get_buf().get_u64_at(self.offset + 9)
         }
-
     }
-
 } // end decoder
-

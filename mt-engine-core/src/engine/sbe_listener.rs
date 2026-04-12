@@ -1,13 +1,13 @@
 use crate::engine::events::OrderEventListener;
 use crate::orders::OrderData;
 use crate::types::{Price, Quantity, SequenceNumber, Timestamp};
-use mt_engine::execution_report_codec;
-use mt_engine::message_header_codec;
-#[cfg(not(feature = "dense-node"))]
-use mt_engine::public_trade_codec;
 #[cfg(not(feature = "dense-node"))]
 use mt_engine::depth_update_codec;
+use mt_engine::execution_report_codec;
+use mt_engine::message_header_codec;
 use mt_engine::order_status::OrderStatus as SbeOrderStatus;
+#[cfg(not(feature = "dense-node"))]
+use mt_engine::public_trade_codec;
 use mt_engine::WriteBuf;
 
 pub struct SbeEncoderListener<'a> {
@@ -32,10 +32,8 @@ impl<'a> SbeEncoderListener<'a> {
     ) {
         let current_offset = *offset;
         let buf = WriteBuf::new(&mut self.response_buffer[..]);
-        let encoder = execution_report_codec::encoder::ExecutionReportEncoder::default().wrap(
-            buf,
-            current_offset + message_header_codec::ENCODED_LENGTH,
-        );
+        let encoder = execution_report_codec::encoder::ExecutionReportEncoder::default()
+            .wrap(buf, current_offset + message_header_codec::ENCODED_LENGTH);
         let mut header_encoder = encoder.header(current_offset);
 
         header_encoder.block_length(execution_report_codec::SBE_BLOCK_LENGTH);
@@ -55,33 +53,64 @@ impl<'a> SbeEncoderListener<'a> {
         encoder.timestamp(ts.0);
         encoder.sequence_number(seq.0);
 
-        *offset += message_header_codec::ENCODED_LENGTH + execution_report_codec::SBE_BLOCK_LENGTH as usize;
+        *offset += message_header_codec::ENCODED_LENGTH
+            + execution_report_codec::SBE_BLOCK_LENGTH as usize;
     }
 }
 
 impl<'a> OrderEventListener for SbeEncoderListener<'a> {
     #[inline(always)]
-    fn on_accepted(&mut self, order: &OrderData, ts: Timestamp, seq: SequenceNumber, offset: &mut usize) {
+    fn on_accepted(
+        &mut self,
+        order: &OrderData,
+        ts: Timestamp,
+        seq: SequenceNumber,
+        offset: &mut usize,
+    ) {
         self.encode_execution_report(order, SbeOrderStatus::order_new, ts, seq, offset);
     }
 
     #[inline(always)]
-    fn on_cancelled(&mut self, order: &OrderData, ts: Timestamp, seq: SequenceNumber, offset: &mut usize) {
+    fn on_cancelled(
+        &mut self,
+        order: &OrderData,
+        ts: Timestamp,
+        seq: SequenceNumber,
+        offset: &mut usize,
+    ) {
         self.encode_execution_report(order, SbeOrderStatus::cancelled, ts, seq, offset);
     }
 
     #[inline(always)]
-    fn on_rejected(&mut self, order: &OrderData, ts: Timestamp, seq: SequenceNumber, offset: &mut usize) {
+    fn on_rejected(
+        &mut self,
+        order: &OrderData,
+        ts: Timestamp,
+        seq: SequenceNumber,
+        offset: &mut usize,
+    ) {
         self.encode_execution_report(order, SbeOrderStatus::rejected, ts, seq, offset);
     }
 
     #[inline(always)]
-    fn on_amended(&mut self, order: &OrderData, ts: Timestamp, seq: SequenceNumber, offset: &mut usize) {
+    fn on_amended(
+        &mut self,
+        order: &OrderData,
+        ts: Timestamp,
+        seq: SequenceNumber,
+        offset: &mut usize,
+    ) {
         self.encode_execution_report(order, SbeOrderStatus::order_new, ts, seq, offset);
     }
 
     #[inline(always)]
-    fn on_expired(&mut self, order: &OrderData, ts: Timestamp, seq: SequenceNumber, offset: &mut usize) {
+    fn on_expired(
+        &mut self,
+        order: &OrderData,
+        ts: Timestamp,
+        seq: SequenceNumber,
+        offset: &mut usize,
+    ) {
         self.encode_execution_report(order, SbeOrderStatus::expired, ts, seq, offset);
     }
 
@@ -104,10 +133,8 @@ impl<'a> OrderEventListener for SbeEncoderListener<'a> {
         {
             let current_offset = *offset;
             let buf = WriteBuf::new(&mut self.response_buffer[..]);
-            let encoder = public_trade_codec::encoder::PublicTradeEncoder::default().wrap(
-                buf,
-                current_offset + message_header_codec::ENCODED_LENGTH,
-            );
+            let encoder = public_trade_codec::encoder::PublicTradeEncoder::default()
+                .wrap(buf, current_offset + message_header_codec::ENCODED_LENGTH);
             let mut header_encoder = encoder.header(current_offset);
 
             header_encoder.block_length(public_trade_codec::SBE_BLOCK_LENGTH);
@@ -123,7 +150,8 @@ impl<'a> OrderEventListener for SbeEncoderListener<'a> {
             encoder.timestamp(ts.0);
             encoder.sequence_number(seq.0);
 
-            *offset += message_header_codec::ENCODED_LENGTH + public_trade_codec::SBE_BLOCK_LENGTH as usize;
+            *offset += message_header_codec::ENCODED_LENGTH
+                + public_trade_codec::SBE_BLOCK_LENGTH as usize;
         }
     }
 
@@ -141,10 +169,8 @@ impl<'a> OrderEventListener for SbeEncoderListener<'a> {
         {
             let current_offset = *_offset;
             let buf = WriteBuf::new(&mut self.response_buffer[..]);
-            let encoder = depth_update_codec::encoder::DepthUpdateEncoder::default().wrap(
-                buf,
-                current_offset + message_header_codec::ENCODED_LENGTH,
-            );
+            let encoder = depth_update_codec::encoder::DepthUpdateEncoder::default()
+                .wrap(buf, current_offset + message_header_codec::ENCODED_LENGTH);
             let mut header_encoder = encoder.header(current_offset);
 
             header_encoder.block_length(depth_update_codec::SBE_BLOCK_LENGTH);
@@ -159,7 +185,8 @@ impl<'a> OrderEventListener for SbeEncoderListener<'a> {
             encoder.timestamp(_ts.0);
             encoder.sequence_number(_seq.0);
 
-            *_offset += message_header_codec::ENCODED_LENGTH + depth_update_codec::SBE_BLOCK_LENGTH as usize;
+            *_offset += message_header_codec::ENCODED_LENGTH
+                + depth_update_codec::SBE_BLOCK_LENGTH as usize;
         }
     }
 
