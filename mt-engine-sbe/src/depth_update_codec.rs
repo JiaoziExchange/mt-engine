@@ -1,35 +1,35 @@
 use crate::*;
 
-pub use decoder::OrderCancelDecoder;
-pub use encoder::OrderCancelEncoder;
+pub use decoder::DepthUpdateDecoder;
+pub use encoder::DepthUpdateEncoder;
 
 pub use crate::SBE_SCHEMA_ID;
 pub use crate::SBE_SCHEMA_VERSION;
 pub use crate::SBE_SEMANTIC_VERSION;
 
-pub const SBE_BLOCK_LENGTH: u16 = 24;
-pub const SBE_TEMPLATE_ID: u16 = 2;
+pub const SBE_BLOCK_LENGTH: u16 = 40;
+pub const SBE_TEMPLATE_ID: u16 = 103;
 
 pub mod encoder {
     use super::*;
     use message_header_codec::*;
 
     #[derive(Debug, Default)]
-    pub struct OrderCancelEncoder<'a> {
+    pub struct DepthUpdateEncoder<'a> {
         buf: WriteBuf<'a>,
         initial_offset: usize,
         offset: usize,
         limit: usize,
     }
 
-    impl<'a> Writer<'a> for OrderCancelEncoder<'a> {
+    impl<'a> Writer<'a> for DepthUpdateEncoder<'a> {
         #[inline]
         fn get_buf_mut(&mut self) -> &mut WriteBuf<'a> {
             &mut self.buf
         }
     }
 
-    impl<'a> Encoder<'a> for OrderCancelEncoder<'a> {
+    impl<'a> Encoder<'a> for DepthUpdateEncoder<'a> {
         #[inline]
         fn get_limit(&self) -> usize {
             self.limit
@@ -41,7 +41,7 @@ pub mod encoder {
         }
     }
 
-    impl<'a> OrderCancelEncoder<'a> {
+    impl<'a> DepthUpdateEncoder<'a> {
         pub fn wrap(mut self, buf: WriteBuf<'a>, offset: usize) -> Self {
             let limit = offset + SBE_BLOCK_LENGTH as usize;
             self.buf = buf;
@@ -65,19 +65,41 @@ pub mod encoder {
             header
         }
 
-        /// primitive field 'order_id'
+        /// primitive field 'price'
         /// - min value: 0
         /// - max value: -2
         /// - null value: 0xffffffffffffffff_u64
         /// - characterEncoding: null
-        /// - semanticType: OrderId
+        /// - semanticType: Price
         /// - encodedOffset: 0
         /// - encodedLength: 8
         /// - version: 0
         #[inline]
-        pub fn order_id(&mut self, value: u64) {
+        pub fn price(&mut self, value: u64) {
             let offset = self.offset;
             self.get_buf_mut().put_u64_at(offset, value);
+        }
+
+        /// primitive field 'quantity'
+        /// - min value: 0
+        /// - max value: -2
+        /// - null value: 0xffffffffffffffff_u64
+        /// - characterEncoding: null
+        /// - semanticType: Quantity
+        /// - encodedOffset: 8
+        /// - encodedLength: 8
+        /// - version: 0
+        #[inline]
+        pub fn quantity(&mut self, value: u64) {
+            let offset = self.offset + 8;
+            self.get_buf_mut().put_u64_at(offset, value);
+        }
+
+        /// REQUIRED enum
+        #[inline]
+        pub fn side(&mut self, value: side::Side) {
+            let offset = self.offset + 16;
+            self.get_buf_mut().put_u8_at(offset, value as u8)
         }
 
         /// primitive field 'timestamp'
@@ -86,12 +108,12 @@ pub mod encoder {
         /// - null value: 0xffffffffffffffff_u64
         /// - characterEncoding: null
         /// - semanticType: Timestamp
-        /// - encodedOffset: 8
+        /// - encodedOffset: 17
         /// - encodedLength: 8
         /// - version: 0
         #[inline]
         pub fn timestamp(&mut self, value: u64) {
-            let offset = self.offset + 8;
+            let offset = self.offset + 17;
             self.get_buf_mut().put_u64_at(offset, value);
         }
 
@@ -101,12 +123,12 @@ pub mod encoder {
         /// - null value: 0xffffffffffffffff_u64
         /// - characterEncoding: null
         /// - semanticType: SequenceNumber
-        /// - encodedOffset: 16
+        /// - encodedOffset: 25
         /// - encodedLength: 8
         /// - version: 0
         #[inline]
         pub fn sequence_number(&mut self, value: u64) {
-            let offset = self.offset + 16;
+            let offset = self.offset + 25;
             self.get_buf_mut().put_u64_at(offset, value);
         }
 
@@ -119,7 +141,7 @@ pub mod decoder {
     use message_header_codec::*;
 
     #[derive(Clone, Copy, Debug, Default)]
-    pub struct OrderCancelDecoder<'a> {
+    pub struct DepthUpdateDecoder<'a> {
         buf: ReadBuf<'a>,
         initial_offset: usize,
         offset: usize,
@@ -128,21 +150,21 @@ pub mod decoder {
         pub acting_version: u16,
     }
 
-    impl ActingVersion for OrderCancelDecoder<'_> {
+    impl ActingVersion for DepthUpdateDecoder<'_> {
         #[inline]
         fn acting_version(&self) -> u16 {
             self.acting_version
         }
     }
 
-    impl<'a> Reader<'a> for OrderCancelDecoder<'a> {
+    impl<'a> Reader<'a> for DepthUpdateDecoder<'a> {
         #[inline]
         fn get_buf(&self) -> &ReadBuf<'a> {
             &self.buf
         }
     }
 
-    impl<'a> Decoder<'a> for OrderCancelDecoder<'a> {
+    impl<'a> Decoder<'a> for DepthUpdateDecoder<'a> {
         #[inline]
         fn get_limit(&self) -> usize {
             self.limit
@@ -154,7 +176,7 @@ pub mod decoder {
         }
     }
 
-    impl<'a> OrderCancelDecoder<'a> {
+    impl<'a> DepthUpdateDecoder<'a> {
         pub fn wrap(
             mut self,
             buf: ReadBuf<'a>,
@@ -192,20 +214,32 @@ pub mod decoder {
 
         /// primitive field - 'REQUIRED'
         #[inline]
-        pub fn order_id(&self) -> u64 {
+        pub fn price(&self) -> u64 {
             self.get_buf().get_u64_at(self.offset)
         }
 
         /// primitive field - 'REQUIRED'
         #[inline]
-        pub fn timestamp(&self) -> u64 {
+        pub fn quantity(&self) -> u64 {
             self.get_buf().get_u64_at(self.offset + 8)
+        }
+
+        /// REQUIRED enum
+        #[inline]
+        pub fn side(&self) -> side::Side {
+            self.get_buf().get_u8_at(self.offset + 16).into()
+        }
+
+        /// primitive field - 'REQUIRED'
+        #[inline]
+        pub fn timestamp(&self) -> u64 {
+            self.get_buf().get_u64_at(self.offset + 17)
         }
 
         /// primitive field - 'REQUIRED'
         #[inline]
         pub fn sequence_number(&self) -> u64 {
-            self.get_buf().get_u64_at(self.offset + 16)
+            self.get_buf().get_u64_at(self.offset + 25)
         }
 
     }

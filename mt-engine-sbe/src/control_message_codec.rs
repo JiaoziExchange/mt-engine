@@ -12,7 +12,6 @@ pub const SBE_TEMPLATE_ID: u16 = 500;
 
 pub mod encoder {
     use super::*;
-    use control_op::*;
     use message_header_codec::*;
 
     #[derive(Debug, Default)]
@@ -66,32 +65,49 @@ pub mod encoder {
             header
         }
 
-        /// enum field 'control_op'
+        /// REQUIRED enum
         #[inline]
-        pub fn control_op(&mut self, value: ControlOp) {
+        pub fn control_op(&mut self, value: control_op::ControlOp) {
             let offset = self.offset;
-            self.get_buf_mut().put_u8_at(offset, value.into());
+            self.get_buf_mut().put_u8_at(offset, value as u8)
         }
 
         /// primitive field 'timestamp'
+        /// - min value: 0
+        /// - max value: -2
+        /// - null value: 0xffffffffffffffff_u64
+        /// - characterEncoding: null
+        /// - semanticType: Timestamp
+        /// - encodedOffset: 1
+        /// - encodedLength: 8
+        /// - version: 0
         #[inline]
         pub fn timestamp(&mut self, value: u64) {
-            let offset = self.offset + 8;
+            let offset = self.offset + 1;
             self.get_buf_mut().put_u64_at(offset, value);
         }
 
         /// primitive field 'sequence_number'
+        /// - min value: 0
+        /// - max value: -2
+        /// - null value: 0xffffffffffffffff_u64
+        /// - characterEncoding: null
+        /// - semanticType: SequenceNumber
+        /// - encodedOffset: 9
+        /// - encodedLength: 8
+        /// - version: 0
         #[inline]
         pub fn sequence_number(&mut self, value: u64) {
-            let offset = self.offset + 16;
+            let offset = self.offset + 9;
             self.get_buf_mut().put_u64_at(offset, value);
         }
+
     }
+
 } // end encoder
 
 pub mod decoder {
     use super::*;
-    use control_op::*;
     use message_header_codec::*;
 
     #[derive(Clone, Copy, Debug, Default)]
@@ -166,22 +182,25 @@ pub mod decoder {
             )
         }
 
-        /// enum field - 'REQUIRED'
+        /// REQUIRED enum
         #[inline]
-        pub fn control_op(&self) -> ControlOp {
+        pub fn control_op(&self) -> control_op::ControlOp {
             self.get_buf().get_u8_at(self.offset).into()
         }
 
         /// primitive field - 'REQUIRED'
         #[inline]
         pub fn timestamp(&self) -> u64 {
-            self.get_buf().get_u64_at(self.offset + 8)
+            self.get_buf().get_u64_at(self.offset + 1)
         }
 
         /// primitive field - 'REQUIRED'
         #[inline]
         pub fn sequence_number(&self) -> u64 {
-            self.get_buf().get_u64_at(self.offset + 16)
+            self.get_buf().get_u64_at(self.offset + 9)
         }
+
     }
+
 } // end decoder
+

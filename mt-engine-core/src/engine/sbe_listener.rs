@@ -1,8 +1,13 @@
 use crate::engine::events::OrderEventListener;
 use crate::orders::OrderData;
 use crate::types::{Price, Quantity, SequenceNumber, Timestamp};
+use mt_engine::execution_report_codec;
 use mt_engine::message_header_codec;
-use mt_engine::trade_codec;
+#[cfg(not(feature = "dense-node"))]
+use mt_engine::public_trade_codec;
+#[cfg(not(feature = "dense-node"))]
+use mt_engine::depth_update_codec;
+use mt_engine::order_status::OrderStatus as SbeOrderStatus;
 use mt_engine::WriteBuf;
 
 pub struct SbeEncoderListener<'a> {
@@ -15,45 +20,147 @@ impl<'a> SbeEncoderListener<'a> {
             response_buffer: buffer,
         }
     }
+
+    #[inline(always)]
+    fn encode_execution_report(
+        &mut self,
+        order: &OrderData,
+        status: SbeOrderStatus,
+        ts: Timestamp,
+        seq: SequenceNumber,
+        offset: &mut usize,
+    ) {
+        let current_offset = *offset;
+        let buf = WriteBuf::new(&mut self.response_buffer[..]);
+        let encoder = execution_report_codec::encoder::ExecutionReportEncoder::default().wrap(
+            buf,
+            current_offset + message_header_codec::ENCODED_LENGTH,
+        );
+        let mut header_encoder = encoder.header(current_offset);
+
+        header_encoder.block_length(execution_report_codec::SBE_BLOCK_LENGTH);
+        header_encoder.template_id(execution_report_codec::SBE_TEMPLATE_ID);
+        header_encoder.schema_id(mt_engine::SBE_SCHEMA_ID);
+        header_encoder.version(mt_engine::SBE_SCHEMA_VERSION);
+
+        let mut encoder = unsafe { header_encoder.parent().unwrap_unchecked() };
+        encoder.order_id(order.order_id.0);
+        encoder.user_id(order.user_id.0);
+        encoder.status(status);
+        encoder.side(order.side);
+        encoder.price(order.price.0);
+        encoder.quantity(order.remaining_qty.0 + order.filled_qty.0);
+        encoder.leaves_qty(order.remaining_qty.0);
+        encoder.cum_qty(order.filled_qty.0);
+        encoder.timestamp(ts.0);
+        encoder.sequence_number(seq.0);
+
+        *offset += message_header_codec::ENCODED_LENGTH + execution_report_codec::SBE_BLOCK_LENGTH as usize;
+    }
 }
 
 impl<'a> OrderEventListener for SbeEncoderListener<'a> {
+    #[inline(always)]
+    fn on_accepted(&mut self, order: &OrderData, ts: Timestamp, seq: SequenceNumber, offset: &mut usize) {
+        self.encode_execution_report(order, SbeOrderStatus::order_new, ts, seq, offset);
+    }
+
+    #[inline(always)]
+    fn on_cancelled(&mut self, order: &OrderData, ts: Timestamp, seq: SequenceNumber, offset: &mut usize) {
+        self.encode_execution_report(order, SbeOrderStatus::cancelled, ts, seq, offset);
+    }
+
+    #[inline(always)]
+    fn on_rejected(&mut self, order: &OrderData, ts: Timestamp, seq: SequenceNumber, offset: &mut usize) {
+        self.encode_execution_report(order, SbeOrderStatus::rejected, ts, seq, offset);
+    }
+
+    #[inline(always)]
+    fn on_amended(&mut self, order: &OrderData, ts: Timestamp, seq: SequenceNumber, offset: &mut usize) {
+        self.encode_execution_report(order, SbeOrderStatus::order_new, ts, seq, offset);
+    }
+
+    #[inline(always)]
+    fn on_expired(&mut self, order: &OrderData, ts: Timestamp, seq: SequenceNumber, offset: &mut usize) {
+        self.encode_execution_report(order, SbeOrderStatus::expired, ts, seq, offset);
+    }
+
     #[inline(always)]
     fn on_trade(
         &mut self,
         maker: &OrderData,
         taker: &OrderData,
-        trade_qty: Quantity,
-        trade_price: Price,
+        _trade_qty: Quantity,
+        _trade_price: Price,
         ts: Timestamp,
         seq: SequenceNumber,
-        trade_id: u64,
+        _trade_id: u64,
         offset: &mut usize,
     ) {
-        let trade_offset = *offset;
-        let trade_buf = WriteBuf::new(&mut self.response_buffer[..]);
-        let trade_encoder = trade_codec::encoder::TradeEncoder::default().wrap(
-            trade_buf,
-            trade_offset + message_header_codec::ENCODED_LENGTH,
-        );
-        let mut header_encoder = trade_encoder.header(trade_offset);
+        self.encode_execution_report(maker, SbeOrderStatus::traded, ts, seq, offset);
+        self.encode_execution_report(taker, SbeOrderStatus::traded, ts, seq, offset);
 
-        header_encoder.block_length(trade_codec::SBE_BLOCK_LENGTH);
-        header_encoder.template_id(trade_codec::SBE_TEMPLATE_ID);
-        header_encoder.schema_id(mt_engine::SBE_SCHEMA_ID);
-        header_encoder.version(mt_engine::SBE_SCHEMA_VERSION);
+        #[cfg(not(feature = "dense-node"))]
+        {
+            let current_offset = *offset;
+            let buf = WriteBuf::new(&mut self.response_buffer[..]);
+            let encoder = public_trade_codec::encoder::PublicTradeEncoder::default().wrap(
+                buf,
+                current_offset + message_header_codec::ENCODED_LENGTH,
+            );
+            let mut header_encoder = encoder.header(current_offset);
 
-        let mut trade_encoder = unsafe { header_encoder.parent().unwrap_unchecked() };
-        trade_encoder.trade_id(trade_id);
-        trade_encoder.maker_order_id(maker.order_id.0);
-        trade_encoder.taker_order_id(taker.order_id.0);
-        trade_encoder.side(taker.side);
-        trade_encoder.price(trade_price.0);
-        trade_encoder.quantity(trade_qty.0);
-        trade_encoder.timestamp(ts.0);
-        trade_encoder.sequence_number(seq.0);
+            header_encoder.block_length(public_trade_codec::SBE_BLOCK_LENGTH);
+            header_encoder.template_id(public_trade_codec::SBE_TEMPLATE_ID);
+            header_encoder.schema_id(mt_engine::SBE_SCHEMA_ID);
+            header_encoder.version(mt_engine::SBE_SCHEMA_VERSION);
 
-        *offset += message_header_codec::ENCODED_LENGTH + trade_codec::SBE_BLOCK_LENGTH as usize;
+            let mut encoder = unsafe { header_encoder.parent().unwrap_unchecked() };
+            encoder.trade_id(_trade_id);
+            encoder.price(_trade_price.0);
+            encoder.quantity(_trade_qty.0);
+            encoder.side(taker.side);
+            encoder.timestamp(ts.0);
+            encoder.sequence_number(seq.0);
+
+            *offset += message_header_codec::ENCODED_LENGTH + public_trade_codec::SBE_BLOCK_LENGTH as usize;
+        }
+    }
+
+    #[inline(always)]
+    fn on_depth_update(
+        &mut self,
+        _price: Price,
+        _qty: Quantity,
+        _side: mt_engine::side::Side,
+        _ts: Timestamp,
+        _seq: SequenceNumber,
+        _offset: &mut usize,
+    ) {
+        #[cfg(not(feature = "dense-node"))]
+        {
+            let current_offset = *_offset;
+            let buf = WriteBuf::new(&mut self.response_buffer[..]);
+            let encoder = depth_update_codec::encoder::DepthUpdateEncoder::default().wrap(
+                buf,
+                current_offset + message_header_codec::ENCODED_LENGTH,
+            );
+            let mut header_encoder = encoder.header(current_offset);
+
+            header_encoder.block_length(depth_update_codec::SBE_BLOCK_LENGTH);
+            header_encoder.template_id(depth_update_codec::SBE_TEMPLATE_ID);
+            header_encoder.schema_id(mt_engine::SBE_SCHEMA_ID);
+            header_encoder.version(mt_engine::SBE_SCHEMA_VERSION);
+
+            let mut encoder = unsafe { header_encoder.parent().unwrap_unchecked() };
+            encoder.price(_price.0);
+            encoder.quantity(_qty.0);
+            encoder.side(_side);
+            encoder.timestamp(_ts.0);
+            encoder.sequence_number(_seq.0);
+
+            *_offset += message_header_codec::ENCODED_LENGTH + depth_update_codec::SBE_BLOCK_LENGTH as usize;
+        }
     }
 
     #[inline(always)]
@@ -66,9 +173,9 @@ impl<'a> OrderEventListener for SbeEncoderListener<'a> {
 mod tests {
     use super::*;
     use crate::types::OrderId;
+    use mt_engine::execution_report_codec;
     use mt_engine::message_header_codec;
     use mt_engine::side::Side;
-    use mt_engine::trade_codec;
     use mt_engine::ReadBuf;
 
     #[test]
@@ -107,7 +214,13 @@ mod tests {
 
         let header = message_header_codec::decoder::MessageHeaderDecoder::default()
             .wrap(ReadBuf::new(&buffer[..]), 0);
-        assert_eq!(header.template_id(), trade_codec::SBE_TEMPLATE_ID);
-        assert_eq!(header.block_length(), trade_codec::SBE_BLOCK_LENGTH);
+        assert_eq!(
+            header.template_id(),
+            execution_report_codec::SBE_TEMPLATE_ID
+        );
+        assert_eq!(
+            header.block_length(),
+            execution_report_codec::SBE_BLOCK_LENGTH
+        );
     }
 }

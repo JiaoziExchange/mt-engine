@@ -138,15 +138,34 @@
         <field name="sequence_number" id="11" type="SequenceNumber"/>
     </message>
 
-    <message name="Trade" id="101" blockLength="64">
-        <field name="trade_id" id="1" type="OrderId"/>
-        <field name="maker_order_id" id="2" type="OrderId"/>
-        <field name="taker_order_id" id="3" type="OrderId"/>
+    <message name="ExecutionReport" id="10" blockLength="72">
+        <field name="order_id" id="1" type="OrderId"/>
+        <field name="user_id" id="2" type="UserId"/>
+        <field name="status" id="3" type="OrderStatus"/>
         <field name="side" id="4" type="Side"/>
         <field name="price" id="5" type="Price"/>
         <field name="quantity" id="6" type="Quantity"/>
-        <field name="timestamp" id="7" type="Timestamp"/>
-        <field name="sequence_number" id="8" type="SequenceNumber"/>
+        <field name="leaves_qty" id="7" type="Quantity"/>
+        <field name="cum_qty" id="8" type="Quantity"/>
+        <field name="timestamp" id="9" type="Timestamp"/>
+        <field name="sequence_number" id="10" type="SequenceNumber"/>
+    </message>
+
+    <message name="PublicTrade" id="102" blockLength="48">
+        <field name="trade_id" id="1" type="OrderId"/>
+        <field name="price" id="2" type="Price"/>
+        <field name="quantity" id="3" type="Quantity"/>
+        <field name="side" id="4" type="Side"/>
+        <field name="timestamp" id="5" type="Timestamp"/>
+        <field name="sequence_number" id="6" type="SequenceNumber"/>
+    </message>
+
+    <message name="DepthUpdate" id="103" blockLength="40">
+        <field name="price" id="1" type="Price"/>
+        <field name="quantity" id="2" type="Quantity"/>
+        <field name="side" id="3" type="Side"/>
+        <field name="timestamp" id="4" type="Timestamp"/>
+        <field name="sequence_number" id="5" type="SequenceNumber"/>
     </message>
 
     <message name="ControlMessage" id="500" blockLength="24">
