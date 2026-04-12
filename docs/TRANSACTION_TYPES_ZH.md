@@ -91,10 +91,14 @@ The MT-Engine is designed for deterministic, high-frequency trading:
 
 ## Post-Trade Information
 
-Each successful transaction produces a `Trade` report via SBE:
-- `trade_id`: Unique trade identifier.
-- `maker_order_id`: ID of the passive order.
-- `taker_order_id`: ID of the aggressive order.
-- `price`: Execution price.
-- `quantity`: Execution quantity.
-- `timestamp`: Nanosecond timestamp.
+每笔成功的交易都会通过 SBE 为 Maker 和 Taker 生成 `ExecutionReport`（执行报告）：
+- `order_id`: 订单 ID。
+- `status`: 更新后的状态（例如 `traded`）。
+- `leaves_qty`: 订单剩余未成交数量。
+- `cum_qty`: 到目前为止累计成交的数量。
+- `price`: 订单的委托价格。
+- `quantity`: 订单的总数量。
+
+如果启用了市场数据广播（即非 dense 节点），引擎还会额外生成：
+- `PublicTrade`: 包含公共成交明细 (`trade_id`, `price`, `quantity`, `side`)。
+- `DepthUpdate`: 包含受影响价格档位的最新深度（总数量）。

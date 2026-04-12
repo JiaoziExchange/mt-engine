@@ -27,7 +27,7 @@ Simple Binary Encoding (SBE) 是一个高性能二进制编码标准，最初由
 根据 MT-Engine 架构设计文档，所有对外暴露的 struct 都设计为固定大小，便于 SBE 生成的解析器处理。集成 SBE 的目标：
 
 1. **命令序列化**：将 `Command` 结构序列化为二进制格式，用于网络传输或持久化
-2. **结果序列化**：将 `CommandOutcome` / `Trade` 序列化为二进制格式
+2. **结果序列化**：将 `ExecutionReport` / `PublicTrade` / `DepthUpdate` 序列化为二进制格式
 3. **跨语言互操作**：支持与其他语言（如 Java、C++）的系统进行消息交换
 4. **高性能解析**：使用 SBE 生成的零拷贝解析器处理入站消息
 
@@ -554,25 +554,37 @@ impl OrderFlags {
 
         <!-- -------- 响应消息 -------- -->
 
-        <!-- 成交记录 -->
-        <message name="Trade" id="101" description="Trade execution report" blockLength="48">
-            <field name="buy_order_id" id="1" type="OrderId"/>
-            <field name="sell_order_id" id="2" type="OrderId"/>
-            <field name="price" id="3" type="Price"/>
-            <field name="quantity" id="4" type="Quantity"/>
-            <field name="buy_user_id" id="5" type="UserId"/>
-            <field name="sell_user_id" id="6" type="UserId"/>
+        <!-- 订单执行报告 (私有) -->
+        <message name="ExecutionReport" id="10" description="Order execution report" blockLength="72">
+            <field name="order_id" id="1" type="OrderId"/>
+            <field name="user_id" id="2" type="UserId"/>
+            <field name="status" id="3" type="OrderStatus"/>
+            <field name="side" id="4" type="Side"/>
+            <field name="price" id="5" type="Price"/>
+            <field name="quantity" id="6" type="Quantity"/>
+            <field name="leaves_qty" id="7" type="Quantity"/>
+            <field name="cum_qty" id="8" type="Quantity"/>
+            <field name="timestamp" id="9" type="Timestamp"/>
+            <field name="sequence_number" id="10" type="SequenceNumber"/>
         </message>
 
-        <!-- 订单执行报告 -->
-        <message name="OrderReport" id="102" description="Order execution report" blockLength="40">
-            <field name="order_id" id="1" type="OrderId"/>
-            <field name="status" id="2" type="OrderStatus"/>
-            <field name="filled_qty" id="3" type="Quantity"/>
-            <field name="remaining_qty" id="4" type="Quantity"/>
-            <field name="avg_price" id="5" type="Price"/>
-            <field name="cancel_reason" id="6" type="CancelReason"/>
-            <field name="timestamp" id="7" type="Timestamp"/>
+        <!-- 公共成交记录 (行情) -->
+        <message name="PublicTrade" id="102" description="Public trade record" blockLength="48">
+            <field name="trade_id" id="1" type="OrderId"/>
+            <field name="price" id="2" type="Price"/>
+            <field name="quantity" id="3" type="Quantity"/>
+            <field name="side" id="4" type="Side"/>
+            <field name="timestamp" id="5" type="Timestamp"/>
+            <field name="sequence_number" id="6" type="SequenceNumber"/>
+        </message>
+
+        <!-- 深度更新 (行情) -->
+        <message name="DepthUpdate" id="103" description="Market depth update" blockLength="40">
+            <field name="price" id="1" type="Price"/>
+            <field name="quantity" id="2" type="Quantity"/>
+            <field name="side" id="3" type="Side"/>
+            <field name="timestamp" id="4" type="Timestamp"/>
+            <field name="sequence_number" id="5" type="SequenceNumber"/>
         </message>
 
         <!-- -------- 批量消息 -------- -->
@@ -1292,7 +1304,7 @@ fn decode_with_version_check(buf: &[u8]) {
 ─────────────────────────────────────────────
 0-999         保留给协议       -
 1-100         命令消息         1=NewOrderSingle, 2=OrderCancel
-101-200       响应消息         101=Trade, 102=OrderReport
+101-200       响应消息         10=ExecutionReport, 102=PublicTrade, 103=DepthUpdate
 201-300       批量消息         201=BatchSubmit
 301-400       管理消息         301=Heartbeat, 302=Reset
 1001+         用户扩展          -
