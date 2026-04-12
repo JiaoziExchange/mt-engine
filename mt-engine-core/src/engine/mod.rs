@@ -185,7 +185,8 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
         };
 
         let mut offset = 0usize;
-        self.listener.on_accepted(&taker_order, ts, seq, &mut offset);
+        self.listener
+            .on_accepted(&taker_order, ts, seq, &mut offset);
 
         // [Conditional Order Branch (Stop/TP)]
         if taker_order.is_stop() {
@@ -225,8 +226,17 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
                         if let Err(fail) = self.add_resting_order(taker_order) {
                             return CommandOutcome::Rejected(fail);
                         }
-                        let depth = self.backend.get_total_depth(taker_order.side, taker_order.price);
-                        self.listener.on_depth_update(taker_order.price, Quantity(depth), taker_order.side, ts, seq, &mut offset);
+                        let depth = self
+                            .backend
+                            .get_total_depth(taker_order.side, taker_order.price);
+                        self.listener.on_depth_update(
+                            taker_order.price,
+                            Quantity(depth),
+                            taker_order.side,
+                            ts,
+                            seq,
+                            &mut offset,
+                        );
 
                         if taker_order.filled_qty.0 > 0 {
                             OrderStatus::PartiallyFilled
@@ -292,7 +302,8 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
         }
 
         let mut offset = 0usize;
-        self.listener.on_accepted(&taker_order, ts, seq, &mut offset);
+        self.listener
+            .on_accepted(&taker_order, ts, seq, &mut offset);
 
         // [Conditional Order Branch (GTD + SL/TP)]
         if taker_order.is_stop() {
@@ -315,9 +326,18 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
             if let Err(fail) = self.add_resting_order(taker_order) {
                 return CommandOutcome::Rejected(fail);
             }
-            let depth = self.backend.get_total_depth(taker_order.side, taker_order.price);
-            self.listener.on_depth_update(taker_order.price, Quantity(depth), taker_order.side, ts, seq, &mut offset);
-            
+            let depth = self
+                .backend
+                .get_total_depth(taker_order.side, taker_order.price);
+            self.listener.on_depth_update(
+                taker_order.price,
+                Quantity(depth),
+                taker_order.side,
+                ts,
+                seq,
+                &mut offset,
+            );
+
             if taker_order.filled_qty.0 > 0 {
                 OrderStatus::PartiallyFilled
             } else {
@@ -395,7 +415,17 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
             if maker_order.data.is_expired(ts) {
                 // Silently cancel and continue
                 self.listener.on_expired(&maker_order.data, ts, seq, offset);
-                self.listener.on_depth_update(maker_order.data.price, Quantity(self.backend.get_total_depth(maker_order.data.side, maker_order.data.price)), maker_order.data.side, ts, seq, offset);
+                self.listener.on_depth_update(
+                    maker_order.data.price,
+                    Quantity(
+                        self.backend
+                            .get_total_depth(maker_order.data.side, maker_order.data.price),
+                    ),
+                    maker_order.data.side,
+                    ts,
+                    seq,
+                    offset,
+                );
                 if self.backend.level_order_count(level_idx) == 0 {
                     self.backend.remove_empty_level(level_idx);
                 }
@@ -457,8 +487,17 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
 
             // Update Last Trade Price (LTP)
             self.ltp = opp_price;
-            self.listener.on_depth_update(opp_price, Quantity(self.backend.get_total_depth(maker_order.data.side, opp_price)), maker_order.data.side, ts, seq, offset);
-
+            self.listener.on_depth_update(
+                opp_price,
+                Quantity(
+                    self.backend
+                        .get_total_depth(maker_order.data.side, opp_price),
+                ),
+                maker_order.data.side,
+                ts,
+                seq,
+                offset,
+            );
 
             if !maker_order.data.is_fully_filled() {
                 // If it's an Iceberg order and Peak is exhausted, re-queue and [CONTINUE] matching
@@ -510,8 +549,19 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
             self.backend.remove_order(order_idx);
             self.backend.remove_empty_level(level_idx);
 
-            self.listener.on_cancelled(&order_data, ts, seq, &mut offset);
-            self.listener.on_depth_update(order_data.price, Quantity(self.backend.get_total_depth(order_data.side, order_data.price)), order_data.side, ts, seq, &mut offset);
+            self.listener
+                .on_cancelled(&order_data, ts, seq, &mut offset);
+            self.listener.on_depth_update(
+                order_data.price,
+                Quantity(
+                    self.backend
+                        .get_total_depth(order_data.side, order_data.price),
+                ),
+                order_data.side,
+                ts,
+                seq,
+                &mut offset,
+            );
 
             #[cfg(all(feature = "snapshot", not(feature = "dense-node")))]
             self.check_snapshot_trigger();
@@ -568,9 +618,20 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
             {
                 self.backend.modify_order_qty(order_idx, new_qty);
                 let order_ref = self.backend.get_order(order_idx).expect("Exists");
-                self.listener.on_amended(&order_ref.data, ts, seq, &mut offset);
-                self.listener.on_depth_update(order_ref.data.price, Quantity(self.backend.get_total_depth(order_ref.data.side, order_ref.data.price)), order_ref.data.side, ts, seq, &mut offset);
-                
+                self.listener
+                    .on_amended(&order_ref.data, ts, seq, &mut offset);
+                self.listener.on_depth_update(
+                    order_ref.data.price,
+                    Quantity(
+                        self.backend
+                            .get_total_depth(order_ref.data.side, order_ref.data.price),
+                    ),
+                    order_ref.data.side,
+                    ts,
+                    seq,
+                    &mut offset,
+                );
+
                 CommandOutcome::Applied(CommandReport {
                     order_id,
                     status: OrderStatus::New,
@@ -608,8 +669,18 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
                         return CommandOutcome::Rejected(fail);
                     }
                     self.listener.on_amended(&order.data, ts, seq, &mut offset);
-                    self.listener.on_depth_update(order.data.price, Quantity(self.backend.get_total_depth(order.data.side, order.data.price)), order.data.side, ts, seq, &mut offset);
-                    
+                    self.listener.on_depth_update(
+                        order.data.price,
+                        Quantity(
+                            self.backend
+                                .get_total_depth(order.data.side, order.data.price),
+                        ),
+                        order.data.side,
+                        ts,
+                        seq,
+                        &mut offset,
+                    );
+
                     if order.data.filled_qty.0 > 0 {
                         OrderStatus::PartiallyFilled
                     } else {

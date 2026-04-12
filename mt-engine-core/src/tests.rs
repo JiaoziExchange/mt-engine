@@ -15,27 +15,38 @@ pub struct TestTrade {
 }
 
 impl TestTrade {
-    pub fn maker_order_id(&self) -> u64 { self.maker_order_id }
-    pub fn taker_order_id(&self) -> u64 { self.taker_order_id }
-    pub fn price(&self) -> u64 { self.price }
-    pub fn quantity(&self) -> u64 { self.quantity }
+    pub fn maker_order_id(&self) -> u64 {
+        self.maker_order_id
+    }
+    pub fn taker_order_id(&self) -> u64 {
+        self.taker_order_id
+    }
+    pub fn price(&self) -> u64 {
+        self.price
+    }
+    pub fn quantity(&self) -> u64 {
+        self.quantity
+    }
 }
 
 pub fn get_trades<'a>(report: &'a crate::outcome::CommandReport<'a>) -> Vec<TestTrade> {
-    let reports: Vec<_> = report.execution_reports().filter(|r| r.status() == SbeOrderStatus::traded).collect();
+    let reports: Vec<_> = report
+        .execution_reports()
+        .filter(|r| r.status() == SbeOrderStatus::traded)
+        .collect();
     let mut trades = Vec::new();
     let mut last_cum_qty = std::collections::HashMap::new();
     for chunk in reports.chunks(2) {
         if chunk.len() == 2 {
             let maker = &chunk[0];
             let taker = &chunk[1];
-            
+
             let t_id = taker.order_id();
             let t_cum = taker.cum_qty();
             let t_prev = *last_cum_qty.get(&t_id).unwrap_or(&0);
             let t_trade_qty = t_cum - t_prev;
             last_cum_qty.insert(t_id, t_cum);
-            
+
             trades.push(TestTrade {
                 maker_order_id: maker.order_id(),
                 taker_order_id: t_id,
@@ -46,7 +57,6 @@ pub fn get_trades<'a>(report: &'a crate::outcome::CommandReport<'a>) -> Vec<Test
     }
     trades
 }
-
 
 #[test]
 fn test_engine_basic_matching() {
@@ -72,7 +82,14 @@ fn test_engine_basic_matching() {
         let outcome = engine.execute_submit(&decoder);
         if let CommandOutcome::Applied(report) = outcome {
             assert_eq!(report.status, OrderStatus::New);
-            assert_eq!((report.execution_reports().filter(|r| r.status() == mt_engine::order_status::OrderStatus::traded).count() / 2), 0);
+            assert_eq!(
+                (report
+                    .execution_reports()
+                    .filter(|r| r.status() == mt_engine::order_status::OrderStatus::traded)
+                    .count()
+                    / 2),
+                0
+            );
         } else {
             panic!("Expected New");
         }
@@ -96,7 +113,10 @@ fn test_engine_basic_matching() {
             assert_eq!(report.status, OrderStatus::Filled);
 
             // Use typed iterator for safe reading [SAFE READ]
-            let trade = get_trades(&report).into_iter().next().expect("Should have 1 trade");
+            let trade = get_trades(&report)
+                .into_iter()
+                .next()
+                .expect("Should have 1 trade");
             assert_eq!(trade.price(), 150); // Matching at Maker price
             assert_eq!(trade.quantity(), 10);
         } else {
@@ -142,7 +162,14 @@ fn test_engine_tif_ioc() {
 
     if let CommandOutcome::Applied(report) = outcome {
         assert_eq!(report.status, OrderStatus::PartiallyFilled);
-        assert_eq!((report.execution_reports().filter(|r| r.status() == mt_engine::order_status::OrderStatus::traded).count() / 2), 1);
+        assert_eq!(
+            (report
+                .execution_reports()
+                .filter(|r| r.status() == mt_engine::order_status::OrderStatus::traded)
+                .count()
+                / 2),
+            1
+        );
     } else {
         panic!("Expected Partial Fill");
     }
@@ -253,7 +280,14 @@ fn test_engine_market_order() {
     );
     if let CommandOutcome::Applied(report) = engine.execute_submit(&taker) {
         assert_eq!(report.status, OrderStatus::Filled);
-        assert_eq!((report.execution_reports().filter(|r| r.status() == mt_engine::order_status::OrderStatus::traded).count() / 2), 2);
+        assert_eq!(
+            (report
+                .execution_reports()
+                .filter(|r| r.status() == mt_engine::order_status::OrderStatus::traded)
+                .count()
+                / 2),
+            2
+        );
     } else {
         panic!("Expected Market Fill");
     }
@@ -524,7 +558,14 @@ fn test_engine_iceberg_requeue() {
     let outcome = engine.execute_submit(&taker);
 
     if let CommandOutcome::Applied(report) = outcome {
-        assert_eq!((report.execution_reports().filter(|r| r.status() == mt_engine::order_status::OrderStatus::traded).count() / 2), 2);
+        assert_eq!(
+            (report
+                .execution_reports()
+                .filter(|r| r.status() == mt_engine::order_status::OrderStatus::traded)
+                .count()
+                / 2),
+            2
+        );
         let mut trades = get_trades(&report).into_iter();
         assert_eq!(trades.next().unwrap().maker_order_id(), 1);
         assert_eq!(trades.next().unwrap().maker_order_id(), 2);
@@ -545,7 +586,14 @@ fn test_engine_iceberg_requeue() {
         TimeInForce::gtc,
     );
     if let CommandOutcome::Applied(report) = engine.execute_submit(&taker2) {
-        assert_eq!(get_trades(&report).into_iter().next().unwrap().maker_order_id(), 2);
+        assert_eq!(
+            get_trades(&report)
+                .into_iter()
+                .next()
+                .unwrap()
+                .maker_order_id(),
+            2
+        );
     }
 }
 
@@ -620,7 +668,14 @@ fn test_engine_lazy_expiry() {
     // Outcome should be New (resting in book because no match) or New (if it didn't match anything)
     // Actually, match_order should silently remove Order 1.
     if let CommandOutcome::Applied(report) = outcome {
-        assert_eq!((report.execution_reports().filter(|r| r.status() == mt_engine::order_status::OrderStatus::traded).count() / 2), 0);
+        assert_eq!(
+            (report
+                .execution_reports()
+                .filter(|r| r.status() == mt_engine::order_status::OrderStatus::traded)
+                .count()
+                / 2),
+            0
+        );
         assert_eq!(report.status, OrderStatus::New);
     }
 
@@ -663,7 +718,14 @@ fn test_engine_gtd_fill_before_expiry() {
     let outcome = engine.execute_submit(&taker);
 
     if let CommandOutcome::Applied(report) = outcome {
-        assert_eq!((report.execution_reports().filter(|r| r.status() == mt_engine::order_status::OrderStatus::traded).count() / 2), 1);
+        assert_eq!(
+            (report
+                .execution_reports()
+                .filter(|r| r.status() == mt_engine::order_status::OrderStatus::traded)
+                .count()
+                / 2),
+            1
+        );
         assert_eq!(report.status, OrderStatus::Filled);
     }
 }
@@ -752,7 +814,14 @@ fn test_complex_scenario_multi_strategy() {
                 trade.price()
             );
         }
-        assert!((report.execution_reports().filter(|r| r.status() == mt_engine::order_status::OrderStatus::traded).count() / 2) > 0);
+        assert!(
+            (report
+                .execution_reports()
+                .filter(|r| r.status() == mt_engine::order_status::OrderStatus::traded)
+                .count()
+                / 2)
+                > 0
+        );
     }
 
     println!(
@@ -1006,7 +1075,14 @@ fn test_sl_tp_triggers() {
     if let CommandOutcome::Applied(report) = res2 {
         // Trade 1: t2 vs m2 (LTP = 100)
         // Trade 2: s1 vs m2 (Triggered)
-        assert_eq!((report.execution_reports().filter(|r| r.status() == mt_engine::order_status::OrderStatus::traded).count() / 2), 2);
+        assert_eq!(
+            (report
+                .execution_reports()
+                .filter(|r| r.status() == mt_engine::order_status::OrderStatus::traded)
+                .count()
+                / 2),
+            2
+        );
     } else {
         panic!("Execution failed");
     }
@@ -1068,7 +1144,14 @@ fn test_recursive_trigger() {
     if let CommandOutcome::Applied(report) = res {
         // Trade 1: t1 vs m1 (LTP = 100)
         // Trade 2: s1 vs m1 (Triggered by LTP=100)
-        assert_eq!((report.execution_reports().filter(|r| r.status() == mt_engine::order_status::OrderStatus::traded).count() / 2), 2);
+        assert_eq!(
+            (report
+                .execution_reports()
+                .filter(|r| r.status() == mt_engine::order_status::OrderStatus::traded)
+                .count()
+                / 2),
+            2
+        );
 
         let mut trades = get_trades(&report).into_iter();
         let tr1 = trades.next().unwrap();
@@ -1164,7 +1247,14 @@ fn test_large_scale_stress() {
 
     // Result check: LTP changed to 1000, should have triggered many orders
     if let CommandOutcome::Applied(report) = res {
-        assert!((report.execution_reports().filter(|r| r.status() == mt_engine::order_status::OrderStatus::traded).count() / 2) >= 1);
+        assert!(
+            (report
+                .execution_reports()
+                .filter(|r| r.status() == mt_engine::order_status::OrderStatus::traded)
+                .count()
+                / 2)
+                >= 1
+        );
     }
 }
 
@@ -1235,7 +1325,14 @@ fn test_e2e_stop_limit_slippage() {
     if let CommandOutcome::Applied(report) = res {
         // Trade 1: Taker 4 vs Maker 3 @ 150
         // Trade 2: Triggered 2 vs Maker 1 @ 160
-        assert_eq!((report.execution_reports().filter(|r| r.status() == mt_engine::order_status::OrderStatus::traded).count() / 2), 2);
+        assert_eq!(
+            (report
+                .execution_reports()
+                .filter(|r| r.status() == mt_engine::order_status::OrderStatus::traded)
+                .count()
+                / 2),
+            2
+        );
 
         let mut trades = get_trades(&report).into_iter();
         let tr1 = trades.next().unwrap();
@@ -1292,7 +1389,14 @@ fn test_e2e_iceberg_fok_fill() {
 
     if let CommandOutcome::Applied(report) = res {
         assert_eq!(report.status, OrderStatus::Filled);
-        assert_eq!((report.execution_reports().filter(|r| r.status() == mt_engine::order_status::OrderStatus::traded).count() / 2), 1); // For iceberg, if it fills all at once, it's one trade if it stays at same level
+        assert_eq!(
+            (report
+                .execution_reports()
+                .filter(|r| r.status() == mt_engine::order_status::OrderStatus::traded)
+                .count()
+                / 2),
+            1
+        ); // For iceberg, if it fills all at once, it's one trade if it stays at same level
         let trade = get_trades(&report).into_iter().next().unwrap();
         assert_eq!(trade.quantity(), 100);
     }
@@ -1384,7 +1488,14 @@ fn test_e2e_cascading_volatility() {
         // Trade 1: T5 vs M4 @ 95 (LTP=95)
         // -> Triggers S1. S1 matches Maker 1 @ 90 (LTP=90)
         // -> Triggers TP1. TP1 matches remaining S1 @ 90 (LTP=90)
-        assert!((report.execution_reports().filter(|r| r.status() == mt_engine::order_status::OrderStatus::traded).count() / 2) >= 3);
+        assert!(
+            (report
+                .execution_reports()
+                .filter(|r| r.status() == mt_engine::order_status::OrderStatus::traded)
+                .count()
+                / 2)
+                >= 3
+        );
     }
 }
 
@@ -1437,7 +1548,14 @@ fn test_e2e_gtd_trigger_expiry() {
 
     if let CommandOutcome::Applied(report) = res {
         // Only t3 vs t2 should match. S1 should have been ignored because it expired while in the pool.
-        assert_eq!((report.execution_reports().filter(|r| r.status() == mt_engine::order_status::OrderStatus::traded).count() / 2), 1);
+        assert_eq!(
+            (report
+                .execution_reports()
+                .filter(|r| r.status() == mt_engine::order_status::OrderStatus::traded)
+                .count()
+                / 2),
+            1
+        );
     }
 }
 
@@ -1496,7 +1614,10 @@ fn test_engine_dense_matching() {
         let outcome = engine.execute_submit(&decoder);
         if let CommandOutcome::Applied(report) = outcome {
             assert_eq!(report.status, OrderStatus::Filled);
-            let trade = get_trades(&report).into_iter().next().expect("Should have 1 trade");
+            let trade = get_trades(&report)
+                .into_iter()
+                .next()
+                .expect("Should have 1 trade");
             assert_eq!(trade.price(), 150);
             assert_eq!(trade.quantity(), 10);
         } else {
@@ -1780,7 +1901,10 @@ fn test_dense_amend_logic() {
         TimeInForce::gtc,
     );
     if let CommandOutcome::Applied(report) = engine.execute_submit(&taker) {
-        assert_eq!(get_trades(&report).into_iter().next().unwrap().quantity(), 5);
+        assert_eq!(
+            get_trades(&report).into_iter().next().unwrap().quantity(),
+            5
+        );
     } else {
         panic!("Expected Matching");
     }
@@ -1839,7 +1963,14 @@ fn test_dense_tif_ioc_fok() {
     );
     if let CommandOutcome::Applied(report) = engine.execute_submit(&taker_ioc) {
         assert_eq!(report.status, OrderStatus::PartiallyFilled);
-        assert_eq!((report.execution_reports().filter(|r| r.status() == mt_engine::order_status::OrderStatus::traded).count() / 2), 1);
+        assert_eq!(
+            (report
+                .execution_reports()
+                .filter(|r| r.status() == mt_engine::order_status::OrderStatus::traded)
+                .count()
+                / 2),
+            1
+        );
     } else {
         panic!("Expected Partial Fill");
     }
@@ -1937,7 +2068,14 @@ fn test_dense_stop_limit_trigger() {
     // Order 1 triggers at 145. It attempts to match Buy M2 @ 145.
     if let CommandOutcome::Applied(report) = outcome {
         // Trade 1: T3 vs M2. Trade 2: Triggered S1 vs remaining M2.
-        assert_eq!((report.execution_reports().filter(|r| r.status() == mt_engine::order_status::OrderStatus::traded).count() / 2), 2);
+        assert_eq!(
+            (report
+                .execution_reports()
+                .filter(|r| r.status() == mt_engine::order_status::OrderStatus::traded)
+                .count()
+                / 2),
+            2
+        );
     } else {
         panic!("Expected Matching + Trigger");
     }
@@ -2744,7 +2882,14 @@ fn test_gtd_stop_expired_at_trigger() {
     // Check if S1 matched. It shouldn't match because it's expired.
     if let CommandOutcome::Applied(report) = res {
         // Only Taker (4) vs Maker (3) should match
-        assert_eq!((report.execution_reports().filter(|r| r.status() == mt_engine::order_status::OrderStatus::traded).count() / 2), 1);
+        assert_eq!(
+            (report
+                .execution_reports()
+                .filter(|r| r.status() == mt_engine::order_status::OrderStatus::traded)
+                .count()
+                / 2),
+            1
+        );
         let trade = get_trades(&report).into_iter().next().unwrap();
         assert_eq!(trade.taker_order_id(), 4);
         assert_eq!(trade.maker_order_id(), 3);
