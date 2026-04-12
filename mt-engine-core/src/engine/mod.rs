@@ -226,9 +226,8 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
                         if let Err(fail) = self.add_resting_order(taker_order) {
                             return CommandOutcome::Rejected(fail);
                         }
-                        let depth = self
-                            .backend
-                            .get_total_depth(taker_order.side, taker_order.price);
+                        let level_idx = self.backend.get_level(taker_order.price).unwrap();
+                        let depth = self.backend.level_total_qty(level_idx);
                         self.listener.on_depth_update(
                             taker_order.price,
                             Quantity(depth),
@@ -326,9 +325,8 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
             if let Err(fail) = self.add_resting_order(taker_order) {
                 return CommandOutcome::Rejected(fail);
             }
-            let depth = self
-                .backend
-                .get_total_depth(taker_order.side, taker_order.price);
+            let level_idx = self.backend.get_level(taker_order.price).unwrap();
+            let depth = self.backend.level_total_qty(level_idx);
             self.listener.on_depth_update(
                 taker_order.price,
                 Quantity(depth),
@@ -487,12 +485,15 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
 
             // Update Last Trade Price (LTP)
             self.ltp = opp_price;
+            let depth = self
+                .backend
+                .get_level(opp_price)
+                .map(|l| self.backend.level_total_qty(l))
+                .unwrap_or(0);
+
             self.listener.on_depth_update(
                 opp_price,
-                Quantity(
-                    self.backend
-                        .get_total_depth(maker_order.data.side, opp_price),
-                ),
+                Quantity(depth),
                 maker_order.data.side,
                 ts,
                 seq,
@@ -551,12 +552,14 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
 
             self.listener
                 .on_cancelled(&order_data, ts, seq, &mut offset);
+            let depth = self
+                .backend
+                .get_level(order_data.price)
+                .map(|l| self.backend.level_total_qty(l))
+                .unwrap_or(0);
             self.listener.on_depth_update(
                 order_data.price,
-                Quantity(
-                    self.backend
-                        .get_total_depth(order_data.side, order_data.price),
-                ),
+                Quantity(depth),
                 order_data.side,
                 ts,
                 seq,
@@ -620,12 +623,14 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
                 let order_ref = self.backend.get_order(order_idx).expect("Exists");
                 self.listener
                     .on_amended(&order_ref.data, ts, seq, &mut offset);
+                let depth = self
+                    .backend
+                    .get_level(order_ref.data.price)
+                    .map(|l| self.backend.level_total_qty(l))
+                    .unwrap_or(0);
                 self.listener.on_depth_update(
                     order_ref.data.price,
-                    Quantity(
-                        self.backend
-                            .get_total_depth(order_ref.data.side, order_ref.data.price),
-                    ),
+                    Quantity(depth),
                     order_ref.data.side,
                     ts,
                     seq,
@@ -668,13 +673,15 @@ impl<B: OrderBookBackend, L: OrderEventListener> Engine<B, L> {
                         let _ = self.add_resting_order(old_data);
                         return CommandOutcome::Rejected(fail);
                     }
+                    let depth = self
+                        .backend
+                        .get_level(order.data.price)
+                        .map(|l| self.backend.level_total_qty(l))
+                        .unwrap_or(0);
                     self.listener.on_amended(&order.data, ts, seq, &mut offset);
                     self.listener.on_depth_update(
                         order.data.price,
-                        Quantity(
-                            self.backend
-                                .get_total_depth(order.data.side, order.data.price),
-                        ),
+                        Quantity(depth),
                         order.data.side,
                         ts,
                         seq,

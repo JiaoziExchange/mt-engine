@@ -376,19 +376,27 @@ impl OrderBookBackend for DenseBackend {
         match side {
             Side::buy => {
                 let limit_idx = self.price_to_idx(price_limit).unwrap_or(0);
-                // Iterate bids: backwards (from highest to limit price)
-                for idx in (limit_idx..self.depth).rev() {
-                    if let Some(level) = &self.level_array[idx] {
-                        total += level.total_qty;
+                // Optimization: only scan from the highest bid down to the limit
+                if let Some(best_idx) = self.bids_bitset.find_last(self.depth) {
+                    if best_idx >= limit_idx {
+                        for idx in (limit_idx..=best_idx).rev() {
+                            if let Some(level) = &self.level_array[idx] {
+                                total += level.total_qty;
+                            }
+                        }
                     }
                 }
             }
             Side::sell => {
                 let limit_idx = self.price_to_idx(price_limit).unwrap_or(self.depth - 1);
-                // Iterate asks: forwards (from lowest to limit price)
-                for idx in 0..=limit_idx {
-                    if let Some(level) = &self.level_array[idx] {
-                        total += level.total_qty;
+                // Optimization: only scan from the lowest ask up to the limit
+                if let Some(best_idx) = self.asks_bitset.find_first(self.depth) {
+                    if best_idx <= limit_idx {
+                        for idx in best_idx..=limit_idx {
+                            if let Some(level) = &self.level_array[idx] {
+                                total += level.total_qty;
+                            }
+                        }
                     }
                 }
             }

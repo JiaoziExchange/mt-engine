@@ -250,12 +250,14 @@ impl OrderBookBackend for SparseBackend {
         let mut total = 0u64;
         match side {
             Side::buy => {
-                for (&_p, &level_idx) in self.bids.range(..=price_limit).rev() {
+                // To match a Sell order at price_limit, we need Bids >= price_limit
+                for (&_p, &level_idx) in self.bids.range(price_limit..).rev() {
                     total += self.level_total_qty(level_idx);
                 }
             }
             Side::sell => {
-                for (&_p, &level_idx) in self.asks.range(price_limit..) {
+                // To match a Buy order at price_limit, we need Asks <= price_limit
+                for (&_p, &level_idx) in self.asks.range(..=price_limit) {
                     total += self.level_total_qty(level_idx);
                 }
             }
