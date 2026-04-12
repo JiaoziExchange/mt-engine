@@ -15,9 +15,9 @@ Benchmarked under **50,000 order steady-state saturation** with strictly **monot
 
 | Backend Configuration | Snapshot Features | Avg Latency (ns/op) | Performance Notes |
 | :--- | :---: | :---: | :--- |
-| **`DenseBackend`** | OFF | **~15.6 ns** | 🚀 **O(1)** logic, zero-leak steady state |
-| **`SparseBackend`** | OFF | ~30.8 ns | 🧩 Memory efficient (O(log N)) |
-| **`SparseBackend`** | **ON** | **~30.8 ns** | 🛡️ **Zero-Cost Abstraction verified** |
+| **`DenseBackend`** | OFF | **~19.1 ns** | 🚀 **O(1)** logic, zero-leak steady state |
+| **`SparseBackend`** | OFF | ~40.6 ns | 🧩 Memory efficient (O(log N)) |
+| **`SparseBackend`** | **ON** | **~35.3 ns** | 🛡️ **Zero-Cost Abstraction verified** |
 | **`Dense + Snapshot`**| N/A | Mutually Exclusive | Use `serde` for direct array persistence |
 
 *(Note: These benchmarks reflect high-fidelity steady-state performance. The inclusion of **O(1) OrderID Monotonicity Guards** has further optimized the hot path by removing redundant map lookups for uniqueness.)*
